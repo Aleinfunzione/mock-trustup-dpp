@@ -10,7 +10,6 @@ const REGISTRY_KEY = "identity_registry";
 const ADMIN_CREDS_KEY = "admin_credentials"; // { username, password, adminDid }
 
 type Role = "admin" | "company" | "creator" | "operator" | "machine";
-
 type Actor = {
   did: string;
   role: Role;
@@ -31,7 +30,6 @@ function loadRegistry(): Actor[] {
 function saveRegistry(list: Actor[]) {
   localStorage.setItem(REGISTRY_KEY, JSON.stringify(list));
 }
-
 function randomSeed(len = 32) {
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
   const arr = new Uint8Array(len);
@@ -39,6 +37,7 @@ function randomSeed(len = 32) {
   return Array.from(arr, (n) => alphabet[n % alphabet.length]).join("");
 }
 function makeKeysFromSeed(seed: string) {
+  // MOCK: genera un DID riproducibile da seed
   const encoder = new TextEncoder();
   const data = encoder.encode(seed);
   let hash = 0;
@@ -59,10 +58,12 @@ export default function AdminLoginForm() {
     }
   }, []);
 
+  // LOGIN esistente
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // BOOTSTRAP iniziale
   const [adminName, setAdminName] = useState("Admin");
   const [newUsername, setNewUsername] = useState("admin@local");
   const [newPassword, setNewPassword] = useState("");
@@ -83,6 +84,7 @@ export default function AdminLoginForm() {
       setError("Compila i campi e verifica la conferma password.");
       return;
     }
+    // Crea attore Admin nel registry con seed & DID
     const seed = randomSeed(40);
     const { did, publicKeyBase64 } = makeKeysFromSeed(seed);
 
@@ -101,6 +103,7 @@ export default function AdminLoginForm() {
     reg.push(adminActor);
     saveRegistry(reg);
 
+    // Salva credenziali
     localStorage.setItem(
       ADMIN_CREDS_KEY,
       JSON.stringify({ username: newUsername.trim(), password: newPassword, adminDid: did })
@@ -109,6 +112,7 @@ export default function AdminLoginForm() {
     setBootstrapResult(adminActor);
   }
 
+  // NESSUN ADMIN: wizard di creazione
   if (!creds) {
     return (
       <Card className="rounded-2xl shadow-sm">
@@ -182,6 +186,7 @@ export default function AdminLoginForm() {
     );
   }
 
+  // ADMIN ESISTE: form di login
   return (
     <Card className="rounded-2xl shadow-sm">
       <CardContent className="p-6 space-y-4">
@@ -206,9 +211,9 @@ export default function AdminLoginForm() {
               placeholder="••••••••"
             />
           </div>
-          {error && <div className="text-sm text-red-500">{error}</div>}
+        {error && <div className="text-sm text-red-500">{error}</div>}
           <Button type="submit">Entra</Button>
-        </form>
+      </form>
       </CardContent>
     </Card>
   );

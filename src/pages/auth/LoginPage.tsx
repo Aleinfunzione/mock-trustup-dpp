@@ -11,7 +11,7 @@ type Mode = "admin" | "seed";
 const LAST_LOGIN_TAB = "last_login_tab";
 
 export default function LoginPage() {
-  // Carico la tab salvata in precedenza (default: "admin")
+  // Carica la tab salvata (default admin)
   const [mode, setMode] = useState<Mode>(() => {
     const saved = localStorage.getItem(LAST_LOGIN_TAB) as Mode | null;
     return saved === "seed" ? "seed" : "admin";
@@ -30,7 +30,6 @@ export default function LoginPage() {
     if (!ok) setError("DID non registrato oppure seed non valida.");
   }
 
-  // Persiste la scelta della tab
   useEffect(() => {
     localStorage.setItem(LAST_LOGIN_TAB, mode);
   }, [mode]);
