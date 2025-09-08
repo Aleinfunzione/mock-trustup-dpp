@@ -29,6 +29,10 @@ export default function LoginPage() {
     const ok = loginWithSeed(seed.trim());
     if (!ok) setError("DID non registrato oppure seed non valida.");
   }
+  
+  useEffect(() => {
+  console.log("[DEBUG] LoginPage wrapper mounted");
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(LAST_LOGIN_TAB, mode);

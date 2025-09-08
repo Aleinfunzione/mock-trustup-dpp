@@ -11,6 +11,7 @@ type Mode = "admin" | "seed";
 const LAST_LOGIN_TAB = "last_login_tab";
 
 export default function LoginForm() {
+  // Mostra la tab memorizzata (default admin)
   const [mode, setMode] = useState<Mode>(() => {
     const saved = localStorage.getItem(LAST_LOGIN_TAB) as Mode | null;
     return saved === "seed" ? "seed" : "admin";
@@ -28,11 +29,15 @@ export default function LoginForm() {
     const ok = loginWithSeed(seed.trim());
     if (!ok) setError("DID non registrato oppure seed non valida.");
   }
+useEffect(() => {
+  console.log("[DEBUG] LoginForm with TABS mounted");
+}, []);
 
   useEffect(() => {
     localStorage.setItem(LAST_LOGIN_TAB, mode);
   }, [mode]);
 
+  // Redirect automatico dopo login
   useEffect(() => {
     if (!user) return;
     const routeByRole: Record<string, string> = {
@@ -54,15 +59,23 @@ export default function LoginForm() {
         </CardContent>
       </Card>
 
+      {/* TAB SWITCH */}
       <div className="flex gap-2 mb-3">
-        <Button variant={mode === "admin" ? "default" : "secondary"} onClick={() => setMode("admin")}>
+        <Button
+          variant={mode === "admin" ? "default" : "secondary"}
+          onClick={() => setMode("admin")}
+        >
           Admin
         </Button>
-        <Button variant={mode === "seed" ? "default" : "secondary"} onClick={() => setMode("seed")}>
+        <Button
+          variant={mode === "seed" ? "default" : "secondary"}
+          onClick={() => setMode("seed")}
+        >
           Seed (DID)
         </Button>
       </div>
 
+      {/* CONTENUTO TAB */}
       {mode === "admin" ? (
         <AdminLoginForm />
       ) : (
@@ -72,7 +85,12 @@ export default function LoginForm() {
             <form onSubmit={handleSeedLogin} className="grid gap-4">
               <div>
                 <Label htmlFor="seed">Seed phrase</Label>
-                <Input id="seed" value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="inserisci le 12/24 parole..." />
+                <Input
+                  id="seed"
+                  value={seed}
+                  onChange={(e) => setSeed(e.target.value)}
+                  placeholder="inserisci le 12/24 parole..."
+                />
               </div>
               {error && <div className="text-sm text-red-500">{error}</div>}
               <Button type="submit">Continua</Button>
