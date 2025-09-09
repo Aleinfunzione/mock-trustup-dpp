@@ -1,4 +1,4 @@
-// File: src/utils/env.ts
+// src/utils/env.ts
 // Gestione variabili di ambiente per l'applicazione TRUSTUP MOCK
 
 /**
@@ -126,18 +126,6 @@ export function isProduction(): boolean {
 }
 
 /**
- * Ottiene l'URL base dell'API (se configurato)
- */
-export function getApiBaseUrl(): string {
-  try {
-    const apiUrl = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
-    return apiUrl?.trim() || 'http://localhost:3000/api';
-  } catch (error) {
-    return 'http://localhost:3000/api';
-  }
-}
-
-/**
  * Configura admin seed per testing (solo development)
  */
 export function setupAdminSeedForTesting(): void {
@@ -183,7 +171,6 @@ export function getEnvironmentInfo(): {
   hasAdminSeed: boolean;
   hasCompanySeed: boolean;
   hasCreatorSeed: boolean;
-  apiBaseUrl: string;
 } {
   return {
     isDev: isDevelopment(),
@@ -192,7 +179,6 @@ export function getEnvironmentInfo(): {
     hasAdminSeed: Boolean(getAdminSeed()),
     hasCompanySeed: Boolean(getCompanySeed()),
     hasCreatorSeed: Boolean(getCreatorSeed()),
-    apiBaseUrl: getApiBaseUrl(),
   };
 }
 
@@ -213,25 +199,6 @@ export function isValidSeedPhrase(seed: string): boolean {
   return words.every(word => validWordPattern.test(word));
 }
 
-/**
- * Genera una seed phrase di test (NON per uso in produzione)
- */
-export function generateTestSeedPhrase(): string {
-  const testWords = [
-    'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract',
-    'absurd', 'abuse', 'access', 'accident', 'account', 'accuse', 'achieve', 'acid',
-    'acoustic', 'acquire', 'across', 'act', 'action', 'actor', 'actress', 'actual'
-  ];
-  
-  const seedWords = [];
-  for (let i = 0; i < 12; i++) {
-    const randomIndex = Math.floor(Math.random() * testWords.length);
-    seedWords.push(testWords[randomIndex]);
-  }
-  
-  return seedWords.join(' ');
-}
-
 // Export di tutte le funzioni per facilità d'uso
 export const env = {
   getAdminSeed,
@@ -242,12 +209,10 @@ export const env = {
   isDebugMode,
   isDevelopment,
   isProduction,
-  getApiBaseUrl,
   setupAdminSeedForTesting,
   clearTestingConfig,
   getEnvironmentInfo,
   isValidSeedPhrase,
-  generateTestSeedPhrase,
 };
 
 // Log di inizializzazione (solo in development)

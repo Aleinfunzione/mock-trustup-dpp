@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Eye, EyeOff, LogIn, Crown, Building2 } from "lucide-react";
+import { getAdminSeed, getCompanySeed, getCreatorSeed } from "@/utils/env";
 
 // (opzionale) usa AuthContext se presente, altrimenti fallback su localStorage
 let useAuth: any;
@@ -71,14 +72,21 @@ export default function LoginForm() {
   const finalizeLogin = async (seedToUse: string) => {
     try {
       // via AuthContext (preferibile)
-      const u = await auth.loginWithSeed(seedToUse);
-      const role = resolveRoleBySeedFallback(seedToUse);
-      navigate(auth.pathForRole(u.role) as string, { replace: true });
-    } catch {
+      if (auth?.loginWithSeed) {
+        const u = await auth.loginWithSeed(seedToUse);
+        navigate(auth.pathForRole(u.role) as string, { replace: true });
+      } else {
+        // fallback locale
+        const role = resolveRoleBySeedFallback(seedToUse);
+        localStorage.setItem("currentRole", role);
+        navigate(pathForRole(role), { replace: true });
+      }
+    } catch (error) {
+      console.error('❌ Errore finalizeLogin:', error);
       // fallback locale
       const role = resolveRoleBySeedFallback(seedToUse);
       localStorage.setItem("currentRole", role);
-      navigate(pathForRoleFallback(role), { replace: true });
+      navigate(pathForRole(role), { replace: true });
     }
   };
 
@@ -135,7 +143,8 @@ export default function LoginForm() {
       </div>
 
       <p className="text-xs text-zinc-500">
-        <a seed è usata solo in sessione (mock).</p>
+        La seed è usata solo in sessione (mock).
+      </p>
 
       <div className="flex flex-col gap-2">
         <Button type="submit" disabled={loading} className="w-full text-base">
@@ -222,51 +231,4 @@ export default function LoginForm() {
       )}
     </form>
   );
-}
-
-// Utility functions (devono essere importate da @/utils/env)
-function getAdminSeed(): string | undefined {
-  try {
-    const v = (import.meta as any).env?.VITE_ADMIN_SEED as string | undefined;
-    if (v && v.trim()) return v.trim();
-    const ls = localStorage.getItem("VITE_ADMIN_SEED");
-    if (ls && ls.trim()) return ls.trim();
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function getCompanySeed(): string | undefined {
-  try {
-    const v = (import.meta as any).env?.VITE_COMPANY_SEED as string | undefined;
-    if (v && v.trim()) return v.trim();
-    const ls = localStorage.getItem("VITE_COMPANY_SEED");
-    if (ls && ls.trim()) return ls.trim();
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function getCreatorSeed(): string | undefined {
-  try {
-    const v = (import.meta as any).env?.VITE_CREATOR_SEED as string | undefined;
-    if (v && v.trim()) return v.trim();
-    const ls = localStorage.getItem("VITE_CREATOR_SEED");
-    if (ls && ls.trim()) return ls.trim();
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function pathForRoleFallback(role: Role): string {
-  switch (role) {
-    case "admin": return "/admin";
-    case "company": return "/company";
-    case "creator": return "/creator";
-    case "operator": return "/operator";
-    default: return "/machine";
-  }
 }
