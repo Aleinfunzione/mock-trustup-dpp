@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Crown } from "lucide-react";
+import { Crown, Shield, User } from "lucide-react";
 
 import LoginForm from "@/components/auth/LoginForm";
 import { useAuthStore } from "@/stores/authStore";
@@ -16,21 +16,24 @@ export default function LoginPage() {
 
   const { user, loginAdmin } = useAuthStore();
 
+  // Stato per la modalità di login
+  const [loginMode, setLoginMode] = useState<'user' | 'admin'>('user');
+
   // Stato form admin
-  const [username, setUsername] = useState<string>("admin");
-  const [password, setPassword] = useState<string>("demo");
+  const [adminUsername, setAdminUsername] = useState<string>("admin");
+  const [adminPassword, setAdminPassword] = useState<string>("demo");
   const [adminError, setAdminError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Info di debug sulla seed admin
   const adminSeed = getAdminSeed();
-  const forced = typeof window !== "undefined" && localStorage.getItem("forceAdminDemo") === "1";
+  const forced = typeof window !== "undefined" && localStorage.getItem("ForceAdminDemo") === "1";
   const enabled = Boolean(adminSeed) || forced;
 
   // Redirect automatico se già loggato
   useEffect(() => {
     if (!user) return;
-    const dest =
+    const dest = 
       user.role === "admin"
         ? "/admin"
         : user.role === "company"
@@ -45,125 +48,227 @@ export default function LoginPage() {
     navigate(from ?? dest, { replace: true });
   }, [user, navigate, location.state]);
 
+  // Gestione login admin con username/password
   async function handleAdminSubmit(e: React.FormEvent) {
     e.preventDefault();
     setAdminError(null);
     setSubmitting(true);
+    
     try {
-      const ok = loginAdmin(username.trim(), password);
+      const ok = loginAdmin(adminUsername.trim(), adminPassword);
       if (!ok) {
-        setAdminError("Credenziali non valide. Riprova (admin / demo) oppure configura .env.");
+        setAdminError("Credenziali admin non valide. Riprova con admin/demo");
         return;
       }
-      // Il redirect lo fa l'useEffect sopra quando user è valorizzato
+      // Il redirect sarà gestito dall'useEffect sopra
+    } catch (error) {
+      console.error("Errore login admin:", error);
+      setAdminError("Errore durante il login admin");
     } finally {
       setSubmitting(false);
     }
   }
 
-  // Quick button per demo forzata (facoltativo): usa solo il redirect client
-  function handleDemoForce() {
-    // Non setta lo store: serve solo per chi vuole “saltare” alla pagina,
-    // ma NON mostra il tasto Admin in sidebar. Meglio usare il form sopra.
-    navigate("/admin", { replace: true });
+  // Login rapido con admin seed
+  function handleAdminSeedLogin() {
+    if (!adminSeed) {
+      setAdminError("Admin seed non disponibile");
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const ok = loginAdmin(adminSeed.trim(), "demo");
+      if (!ok) {
+        setAdminError("Errore nel login con admin seed");
+      }
+      // Il redirect sarà gestito dall'useEffect sopra
+    } catch (error) {
+      console.error("Errore login admin seed:", error);
+      setAdminError("Errore durante il login con admin seed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Forza admin seed nel localStorage
+  function forceAdminSeed() {
+    localStorage.setItem("VITE_ADMIN_SEED", "clutch captain shoe salt awake harvest setup primary inmate ugly aeon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon");
+    localStorage.setItem("ForceAdminDemo", "1");
+    window.location.reload();
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0B0F1A] p-4">
-      <Card className="w-full max-w-xl border-zinc-800 bg-[#0F1526] text-zinc-100">
+      <Card className="w-full max-w-xl border-zinc-800 bg-[#0F1526] text-zinc-600">
         <CardHeader>
           <CardTitle className="text-2xl tracking-tight">TRUSTUP • MOCK</CardTitle>
           <CardDescription className="text-zinc-400">
-            Accedi con <b>seed</b> oppure con <b>credenziali Admin</b>
+            {loginMode === 'user' ? 'Accedi con seed phrase' : 'Accesso riservato amministratori'}
           </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-6">
-          {/* Login via SEED (rimane il tuo componente esistente) */}
-          <div className="space-y-3">
-            <LoginForm />
-          </div>
-
-          {/* Divider */}
-          <div className="flex items-center gap-3 text-xs text-zinc-500">
-            <div className="h-px flex-1 bg-zinc-800" />
-            oppure
-            <div className="h-px flex-1 bg-zinc-800" />
-          </div>
-
-          {/* Login Admin username/password */}
-          <form onSubmit={handleAdminSubmit} className="rounded-md border border-zinc-800 p-4 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Crown className="h-4 w-4 text-amber-400" />
-              Accesso Admin
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="admin-username">Username</Label>
-                <Input
-                  id="admin-username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin"
-                  autoComplete="username"
-                  className="bg-transparent"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="admin-password">Password</Label>
-                <Input
-                  id="admin-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="demo"
-                  autoComplete="current-password"
-                  className="bg-transparent"
-                />
-              </div>
-            </div>
-
-            <Button
-              type="submit"
-              className="w-full text-base"
-              disabled={submitting}
+          {/* Toggle tra modalità User e Admin */}
+          <div className="flex rounded-lg border border-zinc-800 bg-zinc-900/50 p-1">
+            <button
+              onClick={() => setLoginMode('user')}
+              className={`flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                loginMode === 'user'
+                  ? 'bg-zinc-700 text-white'
+                  : 'text-zinc-400 hover:text-zinc-300'
+              }`}
             >
-              {submitting ? "Accesso in corso…" : "Entra come Admin"}
-            </Button>
+              <User className="h-4 w-4" />
+              Utenti
+            </button>
+            <button
+              onClick={() => setLoginMode('admin')}
+              className={`flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                loginMode === 'admin'
+                  ? 'bg-red-900/50 text-red-300 border border-red-500/50'
+                  : 'text-zinc-400 hover:text-zinc-300'
+              }`}
+            >
+              <Shield className="h-4 w-4" />
+              Admin
+            </button>
+          </div>
 
-            {adminError && <p className="text-red-400 text-sm">{adminError}</p>}
-
-            {/* Box info/debug seed admin */}
-            <div className="mt-2 rounded-md bg-zinc-900/50 p-3 text-xs">
-              Admin seed presente?{" "}
-              <b className={adminSeed ? "text-emerald-400" : "text-red-400"}>
-                {adminSeed ? "SÌ" : "NO"}
-              </b>
-              <div className="mt-1 text-zinc-400 break-words">
-                Valore: {adminSeed ?? <i>undefined</i>}
+          {/* Modalità User - Login con Seed */}
+          {loginMode === 'user' && (
+            <div className="space-y-4">
+              <div className="text-sm text-zinc-400">
+                Inserisci la tua seed phrase per accedere come utente del sistema
               </div>
-              {!enabled && (
-                <div className="mt-2 text-zinc-500">
-                  Puoi forzare una prova rapida impostando:
-                  <pre className="mt-1 whitespace-pre-wrap">
-{`localStorage.setItem("VITE_ADMIN_SEED","${"clutch captain shoe salt awake harvest setup primary inmate ugly among become"}");
-location.reload();`}
-                  </pre>
+              <LoginForm />
+            </div>
+          )}
+
+          {/* Modalità Admin - Login separato */}
+          {loginMode === 'admin' && (
+            <div className="space-y-4">
+              {/* Sezione Login Admin con Username/Password */}
+              <div className="rounded-lg border border-red-500/30 bg-red-900/10 p-4 space-y-4">
+                <div className="flex items-center gap-2 text-red-300 font-medium">
+                  <Crown className="h-5 w-5" />
+                  Accesso Amministratore
+                </div>
+                
+                <form onSubmit={handleAdminSubmit} className="space-y-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="admin-username" className="text-zinc-300">Username</Label>
+                      <Input
+                        id="admin-username"
+                        value={adminUsername}
+                        onChange={(e) => setAdminUsername(e.target.value)}
+                        placeholder="admin"
+                        autoComplete="username"
+                        className="bg-zinc-900/50 border-zinc-700 text-white"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="admin-password" className="text-zinc-300">Password</Label>
+                      <Input
+                        id="admin-password"
+                        type="password"
+                        value={adminPassword}
+                        onChange={(e) => setAdminPassword(e.target.value)}
+                        placeholder="demo"
+                        autoComplete="current-password"
+                        className="bg-zinc-900/50 border-zinc-700 text-white"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <Button
+                    type="submit"
+                    className="w-full bg-red-600 hover:bg-red-700 text-white"
+                    disabled={submitting}
+                  >
+                    {submitting ? "Accesso in corso..." : "🔑 Accedi come Admin"}
+                  </Button>
+
+                  {adminError && (
+                    <div className="text-red-400 text-sm bg-red-900/20 border border-red-500/30 rounded p-2">
+                      {adminError}
+                    </div>
+                  )}
+                </form>
+              </div>
+
+              {/* Sezione Admin Seed (se disponibile) */}
+              {adminSeed && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-900/10 p-4 space-y-3">
+                  <div className="text-amber-300 font-medium text-sm">
+                    🔐 Login Rapido Admin (Seed)
+                  </div>
+                  <Button
+                    onClick={handleAdminSeedLogin}
+                    variant="outline"
+                    className="w-full border-amber-500/50 text-amber-300 hover:bg-amber-900/20"
+                    disabled={submitting}
+                  >
+                    Accedi con Admin Seed
+                  </Button>
                 </div>
               )}
+
+              {/* Debug Info */}
+              <div className="rounded-lg border border-zinc-700 bg-zinc-900/30 p-3 space-y-2">
+                <div className="text-xs text-zinc-400">
+                  <strong>Debug Info:</strong>
+                </div>
+                <div className="text-xs text-zinc-500">
+                  Admin seed presente: {" "}
+                  <span className={adminSeed ? "text-emerald-400" : "text-red-400"}>
+                    {adminSeed ? "✓ SI" : "✗ NO"}
+                  </span>
+                </div>
+                {!adminSeed && (
+                  <Button
+                    onClick={forceAdminSeed}
+                    variant="outline"
+                    size="sm"
+                    className="text-xs border-zinc-600 text-zinc-400 hover:text-zinc-300"
+                  >
+                    Configura Admin Seed per Test
+                  </Button>
+                )}
+                {enabled && (
+                  <div className="text-xs text-zinc-500 mt-2">
+                    <details>
+                      <summary className="cursor-pointer hover:text-zinc-400">
+                        Configurazione manuale
+                      </summary>
+                      <pre className="mt-1 text-xs bg-zinc-800 p-2 rounded overflow-x-auto">
+{`localStorage.setItem("VITE_ADMIN_SEED", 
+"clutch captain shoe salt awake harvest setup primary inmate ugly aeon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon");
+location.reload();`}
+                      </pre>
+                    </details>
+                  </div>
+                )}
+              </div>
             </div>
-          </form>
+          )}
         </CardContent>
 
-        <CardFooter className="text-xs text-zinc-500 flex flex-col gap-2">
-          <div>
-            Credenziali demo consigliate: <code>admin / demo</code>.<br />
-            Personalizzabili via <code>.env.local</code> con{" "}
-            <code>VITE_DEFAULT_ADMIN_USERNAME</code> e <code>VITE_DEFAULT_ADMIN_PASSWORD</code>.
-          </div>
-          <div className="opacity-70">
-            (Solo debug) Vai direttamente a <Button variant="link" className="px-0 text-xs" onClick={handleDemoForce}>/admin</Button> — non abilita i permessi.
+        <CardFooter className="text-xs text-zinc-500">
+          <div className="w-full space-y-1">
+            {loginMode === 'user' ? (
+              <div>
+                Utilizza la tua seed phrase BIP39 per accedere al sistema come utente registrato.
+              </div>
+            ) : (
+              <div>
+                <div>Credenziali admin di default: <code className="bg-zinc-800 px-1 rounded">admin</code> / <code className="bg-zinc-800 px-1 rounded">demo</code></div>
+                <div className="mt-1">Configurabili tramite variabili d'ambiente <code className="bg-zinc-800 px-1 rounded">VITE_DEFAULT_ADMIN_*</code></div>
+              </div>
+            )}
           </div>
         </CardFooter>
       </Card>

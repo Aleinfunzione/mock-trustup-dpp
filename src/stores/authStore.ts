@@ -1,191 +1,260 @@
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
-/** ──────────────────────────────────────────────────────────────────────────
- *  Tipi
- *  ────────────────────────────────────────────────────────────────────────── */
-type Role = "admin" | "company" | "creator" | "operator" | "machine";
+// Tipi per l'autenticazione
+export type UserRole = 'admin' | 'company' | 'creator' | 'operator' | 'machine';
 
-type UserSession = {
+export interface User {
+  id: string;
   did: string;
-  role: Role;
-  name: string;
-  companyDid?: string;
-};
-
-type Actor = {
-  did: string;
-  role: Role;
-  name: string;
-  publicKeyBase64: string;
-  companyDid?: string;
-  seed: string; // MOCK: usata per login locale
-};
-
-/** ──────────────────────────────────────────────────────────────────────────
- *  Costanti & chiavi storage
- *  ────────────────────────────────────────────────────────────────────────── */
-const REGISTRY_KEY = "identity_registry";
-const ADMIN_CREDS_KEY = "admin_credentials";
-
-// Valori di fallback (possono essere sovrascritti da .env)
-const DEFAULT_ADMIN_SEED =
-  (import.meta as any)?.env?.VITE_DEFAULT_ADMIN_SEED ??
-  "clutch captain shoe salt awake harvest setup primary inmate ugly among become";
-
-const DEFAULT_ADMIN_DID =
-  (import.meta as any)?.env?.VITE_DEFAULT_ADMIN_DID ?? "did:mock:admin-0001";
-
-const DEFAULT_ADMIN_NAME = "Administrator";
-
-// Credenziali admin di default per loginAdmin() (solo mock, lato client)
-const DEFAULT_ADMIN_USERNAME =
-  (import.meta as any)?.env?.VITE_DEFAULT_ADMIN_USERNAME ?? "admin";
-const DEFAULT_ADMIN_PASSWORD =
-  (import.meta as any)?.env?.VITE_DEFAULT_ADMIN_PASSWORD ?? "admin";
-
-/** ──────────────────────────────────────────────────────────────────────────
- *  Helpers di storage / bootstrap
- *  ────────────────────────────────────────────────────────────────────────── */
-function readJSON<T>(key: string): T | null {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
-  }
+  role: UserRole;
+  username?: string;
+  companyId?: string;
+  companyName?: string;
+  name?: string;
+  email?: string;
+  isActive: boolean;
+  createdAt: string;
+  lastLoginAt?: string;
 }
 
-function writeJSON(key: string, value: unknown) {
-  localStorage.setItem(key, JSON.stringify(value));
+export interface AuthState {
+  user: User | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
 }
 
-/**
- * Garantisce che nel registro esista un attore admin con seed/DID di default
- * e che esistano le credenziali admin (username/password/adminDid).
- */
-function bootstrapAdmin(): void {
-  // 1) Credenziali admin
-  const creds = readJSON<{ username: string; password: string; adminDid: string }>(ADMIN_CREDS_KEY);
-  if (!creds) {
-    writeJSON(ADMIN_CREDS_KEY, {
-      username: DEFAULT_ADMIN_USERNAME,
-      password: DEFAULT_ADMIN_PASSWORD,
-      adminDid: DEFAULT_ADMIN_DID,
-    });
-  }
-
-  // 2) Registro identità con attore admin
-  const reg = readJSON<Actor[]>(REGISTRY_KEY) ?? [];
-  const hasAdminByDid = reg.some(
-    (a) => a.did.toLowerCase() === DEFAULT_ADMIN_DID.toLowerCase() && a.role === "admin"
-  );
-  const hasAdminBySeed = reg.some(
-    (a) => a.seed.trim().toLowerCase() === DEFAULT_ADMIN_SEED.trim().toLowerCase()
-  );
-
-  if (!hasAdminByDid && !hasAdminBySeed) {
-    reg.push({
-      did: DEFAULT_ADMIN_DID,
-      role: "admin",
-      name: DEFAULT_ADMIN_NAME,
-      publicKeyBase64: "",
-      seed: DEFAULT_ADMIN_SEED,
-    });
-    writeJSON(REGISTRY_KEY, reg);
-  }
-}
-
-/** Carica il registro (garantendo bootstrap admin prima) */
-function loadRegistry(): Actor[] {
-  bootstrapAdmin();
-  return readJSON<Actor[]>(REGISTRY_KEY) ?? [];
-}
-
-/** ──────────────────────────────────────────────────────────────────────────
- *  Zustand store
- *  ────────────────────────────────────────────────────────────────────────── */
-type AuthState = {
-  user: UserSession | null;
-  loginWithSeed: (seed: string) => boolean;
-  loginAdmin: (username: string, password: string) => boolean;
+export interface AuthActions {
+  // Login con seed phrase (per utenti normali)
+  loginWithSeed: (seedPhrase: string) => Promise<boolean>;
+  
+  // Login admin separato (username/password o seed)
+  loginAdmin: (usernameOrSeed: string, password?: string) => boolean;
+  
+  // Logout
   logout: () => void;
-};
+  
+  // Utility
+  setLoading: (loading: boolean) => void;
+  setError: (error: string | null) => void;
+  clearError: () => void;
+  
+  // Verifica permessi
+  hasRole: (role: UserRole) => boolean;
+  hasAnyRole: (roles: UserRole[]) => boolean;
+  isAdmin: () => boolean;
+}
 
-export const useAuthStore = create<AuthState>()(
+export type AuthStore = AuthState & AuthActions;
+
+// Store Zustand con persistenza
+export const useAuthStore = create<AuthStore>()(
   persist(
     (set, get) => ({
+      // Stato iniziale
       user: null,
+      isAuthenticated: false,
+      isLoading: false,
+      error: null,
 
-      /**
-       * Login MOCK via seed:
-       * - se la seed combacia con quella admin di default → ruolo admin garantito
-       * - altrimenti cerca nel registry un attore con quella seed
-       */
-      loginWithSeed: (seed: string) => {
-        const s = (seed ?? "").trim();
-        if (s.length < 10) return false;
+      // Login con seed phrase (utenti normali)
+      loginWithSeed: async (seedPhrase: string): Promise<boolean> => {
+        set({ isLoading: true, error: null });
+        
+        try {
+          // Simula validazione seed phrase
+          if (!seedPhrase || seedPhrase.trim().length < 10) {
+            set({ error: "Seed phrase non valida", isLoading: false });
+            return false;
+          }
 
-        // Riconosci subito l'admin seed (anche senza registry consistente)
-        if (s.toLowerCase() === DEFAULT_ADMIN_SEED.trim().toLowerCase()) {
-          set({
-            user: {
-              did: DEFAULT_ADMIN_DID,
-              role: "admin",
-              name: DEFAULT_ADMIN_NAME,
-            },
-          });
-          return true;
-        }
+          // Simula derivazione DID dalla seed
+          const did = `did:iota:${seedPhrase.split(' ').slice(0, 3).join('')}`;
+          
+          // Determina il ruolo basato sulla seed (logica semplificata)
+          let role: UserRole = 'operator'; // default
+          let companyId = 'company-1';
+          let companyName = 'Demo Company';
+          
+          if (seedPhrase.includes('company')) {
+            role = 'company';
+          } else if (seedPhrase.includes('creator')) {
+            role = 'creator';
+          } else if (seedPhrase.includes('machine')) {
+            role = 'machine';
+          }
 
-        const reg = loadRegistry();
-        const actor = reg.find((a) => a.seed.trim().toLowerCase() === s.toLowerCase());
-        if (!actor) return false;
-
-        set({
-          user: {
-            did: actor.did,
-            role: actor.role,
-            name: actor.name,
-            companyDid: actor.companyDid,
-          },
-        });
-        return true;
-      },
-
-      /**
-       * Login Admin con username/password:
-       * - usa ADMIN_CREDS_KEY; se mancano, bootstrap con valori di default
-       */
-      loginAdmin: (username: string, password: string) => {
-        bootstrapAdmin();
-        const creds = readJSON<{ username: string; password: string; adminDid: string }>(
-          ADMIN_CREDS_KEY
-        );
-        if (!creds) return false;
-
-        // Confronto credenziali
-        if (creds.username !== username || creds.password !== password) return false;
-
-        // Trova l'admin nel registry (o usa fallback)
-        const reg = loadRegistry();
-        const admin =
-          reg.find((a) => a.did.toLowerCase() === creds.adminDid.toLowerCase()) ||
-          reg.find((a) => a.role === "admin") || {
-            did: DEFAULT_ADMIN_DID,
-            role: "admin" as Role,
-            name: DEFAULT_ADMIN_NAME,
+          const user: User = {
+            id: `user-${Date.now()}`,
+            did,
+            role,
+            companyId,
+            companyName,
+            name: `${role.charAt(0).toUpperCase() + role.slice(1)} User`,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+            lastLoginAt: new Date().toISOString(),
           };
 
-        set({ user: { did: admin.did, role: "admin", name: admin.name } });
-        return true;
+          set({
+            user,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+          });
+
+          return true;
+        } catch (error) {
+          console.error('Errore login con seed:', error);
+          set({
+            error: 'Errore durante il login',
+            isLoading: false,
+          });
+          return false;
+        }
       },
 
-      logout: () => set({ user: null }),
+      // Login admin separato
+      loginAdmin: (usernameOrSeed: string, password?: string): boolean => {
+        set({ isLoading: true, error: null });
+
+        try {
+          let isValidAdmin = false;
+
+          // Metodo 1: Username/Password tradizionale
+          if (password) {
+            const validUsername = usernameOrSeed === 'admin';
+            const validPassword = password === 'demo';
+            isValidAdmin = validUsername && validPassword;
+          }
+          // Metodo 2: Admin seed (seed phrase lunga)
+          else {
+            // Verifica se è una seed phrase admin valida
+            const isAdminSeed = usernameOrSeed.includes('clutch captain shoe') || 
+                              usernameOrSeed.split(' ').length >= 12;
+            isValidAdmin = isAdminSeed;
+          }
+
+          if (!isValidAdmin) {
+            set({ 
+              error: 'Credenziali admin non valide', 
+              isLoading: false 
+            });
+            return false;
+          }
+
+          // Crea utente admin
+          const adminUser: User = {
+            id: 'admin-root',
+            did: 'did:iota:admin:root',
+            role: 'admin',
+            username: 'admin',
+            name: 'System Administrator',
+            email: 'admin@trustup.mock',
+            isActive: true,
+            createdAt: new Date().toISOString(),
+            lastLoginAt: new Date().toISOString(),
+          };
+
+          set({
+            user: adminUser,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+          });
+
+          console.log('✅ Login admin riuscito:', adminUser);
+          return true;
+
+        } catch (error) {
+          console.error('❌ Errore login admin:', error);
+          set({
+            error: 'Errore durante il login admin',
+            isLoading: false,
+          });
+          return false;
+        }
+      },
+
+      // Logout
+      logout: () => {
+        set({
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
+          error: null,
+        });
+        
+        // Pulisci localStorage
+        localStorage.removeItem('ForceAdminDemo');
+        
+        console.log('🚪 Logout effettuato');
+      },
+
+      // Utility functions
+      setLoading: (loading: boolean) => set({ isLoading: loading }),
+      
+      setError: (error: string | null) => set({ error }),
+      
+      clearError: () => set({ error: null }),
+
+      // Verifica permessi
+      hasRole: (role: UserRole): boolean => {
+        const { user } = get();
+        return user?.role === role;
+      },
+
+      hasAnyRole: (roles: UserRole[]): boolean => {
+        const { user } = get();
+        return user ? roles.includes(user.role) : false;
+      },
+
+      isAdmin: (): boolean => {
+        const { user } = get();
+        return user?.role === 'admin';
+      },
     }),
     {
-      name: "auth_store",
-      partialize: (s) => ({ user: s.user }),
+      name: 'auth-storage', // nome per localStorage
+      partialize: (state) => ({
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
+      }),
     }
   )
 );
+
+// Hook per verifiche rapide
+export const useAuth = () => {
+  const store = useAuthStore();
+  return {
+    user: store.user,
+    isAuthenticated: store.isAuthenticated,
+    isLoading: store.isLoading,
+    error: store.error,
+    isAdmin: store.isAdmin(),
+    hasRole: store.hasRole,
+    hasAnyRole: store.hasAnyRole,
+    login: store.loginWithSeed,
+    loginAdmin: store.loginAdmin,
+    logout: store.logout,
+  };
+};
+
+// Selettori per performance
+export const selectUser = (state: AuthStore) => state.user;
+export const selectIsAuthenticated = (state: AuthStore) => state.isAuthenticated;
+export const selectIsAdmin = (state: AuthStore) => state.user?.role === 'admin';
+export const selectUserRole = (state: AuthStore) => state.user?.role;
+
+// Utility per debugging
+export const debugAuth = () => {
+  const state = useAuthStore.getState();
+  console.log('🔍 Auth Debug:', {
+    user: state.user,
+    isAuthenticated: state.isAuthenticated,
+    isLoading: state.isLoading,
+    error: state.error,
+  });
+};

@@ -1,23 +1,33 @@
-// src/routes/RequireRole.tsx
-import { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { useUser } from "@/contexts/UserContext";
+import { useAuthStore } from "@/stores/authStore";
 
 type Role = "admin" | "company" | "creator" | "operator" | "machine";
 
-export default function RequireRole({ role, children }: { role: Role; children: ReactNode }) {
-  const { user } = useUser();
+export default function RequireRole({
+  allow,
+  children,
+}: {
+  allow: Role[];
+  children: JSX.Element;
+}) {
+  const { user } = useAuthStore();
   const location = useLocation();
 
-  // Non autenticato → login
-  if (!user?.role) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
-
-  // Ruolo non corrispondente → unauthorized
-  if (user.role !== role) {
-    return <Navigate to="/unauthorized" replace />;
+  if (!allow.includes(user.role)) {
+    const fallback =
+      user.role === "admin"
+        ? "/admin"
+        : user.role === "company"
+        ? "/company"
+        : user.role === "creator"
+        ? "/creator"
+        : user.role === "operator"
+        ? "/operator"
+        : "/machine";
+    return <Navigate to={fallback} replace />;
   }
-
-  return <>{children}</>;
+  return children;
 }
