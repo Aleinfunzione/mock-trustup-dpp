@@ -1,67 +1,94 @@
-import { useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Eye, EyeOff, LogIn, Crown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Eye, EyeOff, LogIn, Crown, Building2, UserPlus2 } from "lucide-react";
+import { getAdminSeed, getCompanySeed, getCreatorSeed } from "@/utils/env";
 
-// ✅ legge direttamente l'env (niente memo)
-const ADMIN_SEED = import.meta.env.VITE_ADMIN_SEED?.trim();
+// (opzionale) se hai l'AuthContext, puoi importarlo e usarlo
+let useAuth: any;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  useAuth = require("@/contexts/AuthContext").useAuth;
+} catch {
+  useAuth = null;
+}
+
+type Role = "admin" | "company" | "creator" | "operator" | "machine";
+
+function pathForRole(role: Role) {
+  switch (role) {
+    case "admin": return "/admin";
+    case "company": return "/company";
+    case "creator": return "/creator";
+    case "operator": return "/operator";
+    default: return "/machine";
+  }
+}
+
+function resolveRoleBySeed(seed: string): Role {
+  const s = seed.trim();
+  const admin = getAdminSeed();
+  const company = getCompanySeed();
+  const creator = getCreatorSeed();
+
+  if (admin && s === admin) return "admin";
+  if (company && s === company) return "company";
+  if (creator && s === creator) return "creator";
+
+  // lookup locale opzionale
+  try {
+    const members = JSON.parse(localStorage.getItem("members") || "[]") as Array<{ seed?: string; role?: Role }>;
+    const found = members.find((m) => (m.seed || "").trim() === s && m.role);
+    if (found?.role) return found.role as Role;
+  } catch {}
+
+  return "company";
+}
 
 export default function LoginForm() {
   const navigate = useNavigate();
+  const auth = useAuth ? useAuth() : null;
+
   const [seed, setSeed] = useState("");
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // DEBUG: vedi in console se l'env c'è
-  // (rimuovi dopo il test)
-  console.log("VITE_ADMIN_SEED presente?", Boolean(ADMIN_SEED));
+  const adminSeed = getAdminSeed();
+  const companySeed = getCompanySeed();
+  const creatorSeed = getCreatorSeed();
 
-  const resolveRoleBySeed = (mnemonic: string) => {
-    const s = mnemonic.trim();
-    if (ADMIN_SEED && s === ADMIN_SEED) return "admin";
+  const hasAdmin = useMemo(() => Boolean(adminSeed), [adminSeed]);
+  const hasCompany = useMemo(() => Boolean(companySeed), [companySeed]);
+  const hasCreator = useMemo(() => Boolean(creatorSeed), [creatorSeed]);
 
-    // eventuali seed demo personalizzate
-    const company = import.meta.env.VITE_COMPANY_SEED?.trim();
-    const creator = import.meta.env.VITE_CREATOR_SEED?.trim();
-    if (company && s === company) return "company";
-    if (creator && s === creator) return "creator";
+  // Log diagnostico (rimuovi dopo)
+  console.log("[LoginForm] hasAdmin?", hasAdmin, "adminSeed:", adminSeed);
 
-    // lookup locale opzionale
-    try {
-      const members = JSON.parse(localStorage.getItem("members") || "[]") as Array<{ seed?: string; role?: string }>;
-      const found = members.find((m) => (m.seed || "").trim() === s && m.role);
-      if (found?.role) return found.role;
-    } catch {}
-
-    return "company";
-  };
-
-  const pathForRole = (role: string) => {
-    if (role === "admin") return "/admin";
-    if (role === "company") return "/company";
-    if (role === "creator") return "/creator";
-    if (role === "operator") return "/operator";
-    return "/machine";
-  };
-
-  const finalizeLogin = (mnemonic: string) => {
-    const role = resolveRoleBySeed(mnemonic);
+  const finalize = async (seedToUse: string) => {
+    if (auth) {
+      const user = await auth.loginWithSeed(seedToUse);
+      navigate(auth.pathForRole(user.role), { replace: true });
+      return;
+    }
+    const role = resolveRoleBySeed(seedToUse);
     localStorage.setItem("currentRole", role);
     navigate(pathForRole(role), { replace: true });
   };
 
-  const onSubmit = (e: React.FormEvent) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!seed.trim()) return;
     setLoading(true);
-    finalizeLogin(seed);
+    await finalize(seed);
   };
 
-  const quickAdmin = () => {
-    if (!ADMIN_SEED) return;
-    setSeed(ADMIN_SEED);
-    finalizeLogin(ADMIN_SEED);
+  const quick = async (which: "admin" | "company" | "creator") => {
+    const map = { admin: adminSeed, company: companySeed, creator: creatorSeed } as const;
+    const val = map[which];
+    if (!val) return;
+    setSeed(val);
+    await finalize(val);
   };
 
   return (
@@ -81,11 +108,11 @@ export default function LoginForm() {
             variant="secondary"
             className="border-zinc-700 bg-[#0C1426] text-zinc-200"
             onClick={() => setShow((v) => !v)}
-            title={show ? "Nascondi" : "Mostra"}
           >
             {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </Button>
         </div>
+        <p className="text-xs text-zinc-500">La seed è usata solo in sessione (mock).</p>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -94,18 +121,34 @@ export default function LoginForm() {
           {loading ? "Verifico…" : "Continua"}
         </Button>
 
-        {/* ✅ Bottone Admin visibile SOLO se VITE_ADMIN_SEED è settata */}
-        {ADMIN_SEED && (
+        {hasAdmin && (
           <Button
             type="button"
             variant="outline"
             className="w-full text-base border-emerald-500/40 hover:bg-emerald-500/10"
-            onClick={quickAdmin}
-            title="Auto-compila con la seed Admin configurata"
+            onClick={() => quick("admin")}
+            title="Accedi con la seed Admin configurata"
           >
             <Crown className="h-4 w-4 mr-2" />
             Accedi come Admin (demo)
           </Button>
+        )}
+
+        {(hasCompany || hasCreator) && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {hasCompany && (
+              <Button type="button" variant="secondary" className="w-full text-base" onClick={() => quick("company")}>
+                <Building2 className="h-4 w-4 mr-2" />
+                Accedi come Azienda (demo)
+              </Button>
+            )}
+            {hasCreator && (
+              <Button type="button" variant="secondary" className="w-full text-base" onClick={() => quick("creator")}>
+                <UserPlus2 className="h-4 w-4 mr-2" />
+                Accedi come Creator (demo)
+              </Button>
+            )}
+          </div>
         )}
       </div>
     </form>

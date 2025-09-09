@@ -4,6 +4,7 @@ import App from "./App";
 import "./index.css";
 
 import { useUI } from "@/stores/uiStore";
+import { AuthProvider } from "@/contexts/AuthContext"; // ⬅️ nuovo
 
 // Inizializza il tema il prima possibile
 (function initThemeEarly() {
@@ -17,7 +18,10 @@ import { useUI } from "@/stores/uiStore";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    {/* ⬇️ Avvolge tutta l’app per esporre loginWithSeed, user, pathForRole, ecc. */}
+    <AuthProvider>
+      <App />
+    </AuthProvider>
   </React.StrictMode>
 );
 
