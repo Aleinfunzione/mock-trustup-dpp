@@ -1,9 +1,23 @@
-import { Navigate } from "react-router-dom";
-import { useAuth } from "@/stores/authStore";
+// src/routes/RequireRole.tsx
+import { ReactNode } from "react";
+import { Navigate, useLocation } from "react-router-dom";
+import { useUser } from "@/contexts/UserContext";
 
-export default function RequireRole({ role, children }: { role: string; children: JSX.Element }) {
-  const u = useAuth((s) => s.currentUser);
-  if (!u) return <Navigate to="/login" replace />;
-  if (u.role !== role) return <Navigate to={`/${u.role}`} replace />;
-  return children;
+type Role = "admin" | "company" | "creator" | "operator" | "machine";
+
+export default function RequireRole({ role, children }: { role: Role; children: ReactNode }) {
+  const { user } = useUser();
+  const location = useLocation();
+
+  // Non autenticato → login
+  if (!user?.role) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  // Ruolo non corrispondente → unauthorized
+  if (user.role !== role) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  return <>{children}</>;
 }

@@ -1,112 +1,39 @@
-import React, { useEffect, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { useAuthStore } from "@/stores/authStore";
-import AdminLoginForm from "@/components/auth/AdminLoginForm";
-import { useNavigate } from "react-router-dom";
-
-type Mode = "admin" | "seed";
-const LAST_LOGIN_TAB = "last_login_tab";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+import LoginForm from "@/components/auth/LoginForm";
+import { ShieldCheck } from "lucide-react";
 
 export default function LoginPage() {
-  // Carica la tab salvata (default admin)
-  const [mode, setMode] = useState<Mode>(() => {
-    const saved = localStorage.getItem(LAST_LOGIN_TAB) as Mode | null;
-    return saved === "seed" ? "seed" : "admin";
-  });
-
-  const navigate = useNavigate();
-  const { user, loginWithSeed } = useAuthStore();
-
-  const [seed, setSeed] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  function handleSeedLogin(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    const ok = loginWithSeed(seed.trim());
-    if (!ok) setError("DID non registrato oppure seed non valida.");
-  }
-  
-  useEffect(() => {
-  console.log("[DEBUG] LoginPage wrapper mounted");
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(LAST_LOGIN_TAB, mode);
-  }, [mode]);
-
-  // Redirect automatico post-login in base al ruolo
-  useEffect(() => {
-    if (!user) return;
-    const routeByRole: Record<string, string> = {
-      admin: "/admin",
-      company: "/company",
-      creator: "/creator",
-      operator: "/operator",
-      machine: "/machine",
-    };
-    navigate(routeByRole[user.role] ?? "/login", { replace: true });
-  }, [user, navigate]);
+  const hasAdminSeed = Boolean(import.meta.env.VITE_ADMIN_SEED?.trim());
 
   return (
-    <div className="min-h-[70vh] flex items-center justify-center p-4">
-      <div className="w-full max-w-xl">
-        <Card className="rounded-2xl shadow-sm mb-4">
-          <CardContent className="p-6 flex items-center justify-between">
-            <h1 className="text-xl font-semibold">TRUSTUP • MOCK</h1>
-            <div className="text-sm text-muted-foreground">UI base shadcn pronta</div>
-          </CardContent>
-        </Card>
+    <div className="min-h-screen flex items-center justify-center bg-[#0B0F1A] p-4">
+      <Card className="w-full max-w-xl border-zinc-800 bg-[#0F1526] text-zinc-100 shadow-lg">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-6 w-6 text-emerald-400" />
+            <CardTitle className="text-2xl tracking-tight">TRUSTUP • Login</CardTitle>
+          </div>
+          <CardDescription className="text-zinc-400">
+            Inserisci la seed phrase per accedere. Se configurata, puoi usare la seed Admin.
+          </CardDescription>
+        </CardHeader>
 
-        {/* TAB SWITCH */}
-        <div className="flex gap-2 mb-3">
-          <Button
-            variant={mode === "admin" ? "default" : "secondary"}
-            onClick={() => setMode("admin")}
-          >
-            Admin
-          </Button>
-          <Button
-            variant={mode === "seed" ? "default" : "secondary"}
-            onClick={() => setMode("seed")}
-          >
-            Seed (DID)
-          </Button>
-        </div>
+        <CardContent>
+          <LoginForm />
+        </CardContent>
 
-        {/* CONTENUTO TAB */}
-        {mode === "admin" ? (
-          <AdminLoginForm />
-        ) : (
-          <Card className="rounded-2xl shadow-sm">
-            <CardContent className="p-6 space-y-4">
-              <h2 className="text-lg font-semibold">Accesso con Seed</h2>
-              <form onSubmit={handleSeedLogin} className="grid gap-4">
-                <div>
-                  <Label htmlFor="seed">Seed phrase</Label>
-                  <Input
-                    id="seed"
-                    value={seed}
-                    onChange={(e) => setSeed(e.target.value)}
-                    placeholder="inserisci le 12/24 parole..."
-                  />
-                </div>
-                {error && <div className="text-sm text-red-500">{error}</div>}
-                <Button type="submit">Continua</Button>
-              </form>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Banner sicurezza mock */}
-        <div className="mt-3 text-xs text-muted-foreground text-center">
-          Ambiente <span className="font-medium">MOCK locale</span>: credenziali e seed sono salvate nel
-          <span className="font-medium"> localStorage</span>.
-        </div>
-      </div>
+        <CardFooter className="flex flex-col items-start gap-2">
+          {hasAdminSeed ? (
+            <p className="text-sm text-zinc-400">
+              L’accesso <span className="text-emerald-400">Admin</span> è attivo: usa il pulsante dedicato nella form.
+            </p>
+          ) : (
+            <p className="text-xs text-zinc-500">
+              Variabile <code className="text-zinc-300">VITE_ADMIN_SEED</code> non configurata: il pulsante Admin non sarà mostrato.
+            </p>
+          )}
+        </CardFooter>
+      </Card>
     </div>
   );
 }

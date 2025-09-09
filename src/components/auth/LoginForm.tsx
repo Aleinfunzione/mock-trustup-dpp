@@ -1,108 +1,113 @@
-import React, { useEffect, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { useAuthStore } from "@/stores/authStore";
-import AdminLoginForm from "@/components/auth/AdminLoginForm";
-import { useNavigate } from "react-router-dom";
+import { Eye, EyeOff, LogIn, Crown } from "lucide-react";
 
-type Mode = "admin" | "seed";
-const LAST_LOGIN_TAB = "last_login_tab";
+// ✅ legge direttamente l'env (niente memo)
+const ADMIN_SEED = import.meta.env.VITE_ADMIN_SEED?.trim();
 
 export default function LoginForm() {
-  // Mostra la tab memorizzata (default admin)
-  const [mode, setMode] = useState<Mode>(() => {
-    const saved = localStorage.getItem(LAST_LOGIN_TAB) as Mode | null;
-    return saved === "seed" ? "seed" : "admin";
-  });
-
   const navigate = useNavigate();
-  const { user, loginWithSeed } = useAuthStore();
-
   const [seed, setSeed] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [show, setShow] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  function handleSeedLogin(e: React.FormEvent) {
+  // DEBUG: vedi in console se l'env c'è
+  // (rimuovi dopo il test)
+  console.log("VITE_ADMIN_SEED presente?", Boolean(ADMIN_SEED));
+
+  const resolveRoleBySeed = (mnemonic: string) => {
+    const s = mnemonic.trim();
+    if (ADMIN_SEED && s === ADMIN_SEED) return "admin";
+
+    // eventuali seed demo personalizzate
+    const company = import.meta.env.VITE_COMPANY_SEED?.trim();
+    const creator = import.meta.env.VITE_CREATOR_SEED?.trim();
+    if (company && s === company) return "company";
+    if (creator && s === creator) return "creator";
+
+    // lookup locale opzionale
+    try {
+      const members = JSON.parse(localStorage.getItem("members") || "[]") as Array<{ seed?: string; role?: string }>;
+      const found = members.find((m) => (m.seed || "").trim() === s && m.role);
+      if (found?.role) return found.role;
+    } catch {}
+
+    return "company";
+  };
+
+  const pathForRole = (role: string) => {
+    if (role === "admin") return "/admin";
+    if (role === "company") return "/company";
+    if (role === "creator") return "/creator";
+    if (role === "operator") return "/operator";
+    return "/machine";
+  };
+
+  const finalizeLogin = (mnemonic: string) => {
+    const role = resolveRoleBySeed(mnemonic);
+    localStorage.setItem("currentRole", role);
+    navigate(pathForRole(role), { replace: true });
+  };
+
+  const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    const ok = loginWithSeed(seed.trim());
-    if (!ok) setError("DID non registrato oppure seed non valida.");
-  }
-useEffect(() => {
-  console.log("[DEBUG] LoginForm with TABS mounted");
-}, []);
+    if (!seed.trim()) return;
+    setLoading(true);
+    finalizeLogin(seed);
+  };
 
-  useEffect(() => {
-    localStorage.setItem(LAST_LOGIN_TAB, mode);
-  }, [mode]);
-
-  // Redirect automatico dopo login
-  useEffect(() => {
-    if (!user) return;
-    const routeByRole: Record<string, string> = {
-      admin: "/admin",
-      company: "/company",
-      creator: "/creator",
-      operator: "/operator",
-      machine: "/machine",
-    };
-    navigate(routeByRole[user.role] ?? "/login", { replace: true });
-  }, [user, navigate]);
+  const quickAdmin = () => {
+    if (!ADMIN_SEED) return;
+    setSeed(ADMIN_SEED);
+    finalizeLogin(ADMIN_SEED);
+  };
 
   return (
-    <div className="w-full max-w-xl">
-      <Card className="rounded-2xl shadow-sm mb-4">
-        <CardContent className="p-6 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">TRUSTUP • MOCK</h1>
-          <div className="text-sm text-muted-foreground">UI base shadcn pronta</div>
-        </CardContent>
-      </Card>
-
-      {/* TAB SWITCH */}
-      <div className="flex gap-2 mb-3">
-        <Button
-          variant={mode === "admin" ? "default" : "secondary"}
-          onClick={() => setMode("admin")}
-        >
-          Admin
-        </Button>
-        <Button
-          variant={mode === "seed" ? "default" : "secondary"}
-          onClick={() => setMode("seed")}
-        >
-          Seed (DID)
-        </Button>
+    <form onSubmit={onSubmit} className="space-y-4">
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-zinc-300">Seed phrase</label>
+        <div className="flex items-center gap-2">
+          <Input
+            type={show ? "text" : "password"}
+            value={seed}
+            onChange={(e) => setSeed(e.target.value)}
+            placeholder="inserisci le 12/24 parole…"
+            className="bg-[#0B1222] border-zinc-800 text-zinc-100 placeholder:text-zinc-500"
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            className="border-zinc-700 bg-[#0C1426] text-zinc-200"
+            onClick={() => setShow((v) => !v)}
+            title={show ? "Nascondi" : "Mostra"}
+          >
+            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </Button>
+        </div>
       </div>
 
-      {/* CONTENUTO TAB */}
-      {mode === "admin" ? (
-        <AdminLoginForm />
-      ) : (
-        <Card className="rounded-2xl shadow-sm">
-          <CardContent className="p-6 space-y-4">
-            <h2 className="text-lg font-semibold">Accesso con Seed</h2>
-            <form onSubmit={handleSeedLogin} className="grid gap-4">
-              <div>
-                <Label htmlFor="seed">Seed phrase</Label>
-                <Input
-                  id="seed"
-                  value={seed}
-                  onChange={(e) => setSeed(e.target.value)}
-                  placeholder="inserisci le 12/24 parole..."
-                />
-              </div>
-              {error && <div className="text-sm text-red-500">{error}</div>}
-              <Button type="submit">Continua</Button>
-            </form>
-          </CardContent>
-        </Card>
-      )}
+      <div className="flex flex-col gap-2">
+        <Button type="submit" disabled={loading} className="w-full text-base">
+          <LogIn className="h-4 w-4 mr-2" />
+          {loading ? "Verifico…" : "Continua"}
+        </Button>
 
-      <div className="mt-3 text-xs text-muted-foreground text-center">
-        Ambiente <span className="font-medium">MOCK locale</span>: credenziali e seed sono salvate nel
-        <span className="font-medium"> localStorage</span>.
+        {/* ✅ Bottone Admin visibile SOLO se VITE_ADMIN_SEED è settata */}
+        {ADMIN_SEED && (
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full text-base border-emerald-500/40 hover:bg-emerald-500/10"
+            onClick={quickAdmin}
+            title="Auto-compila con la seed Admin configurata"
+          >
+            <Crown className="h-4 w-4 mr-2" />
+            Accedi come Admin (demo)
+          </Button>
+        )}
       </div>
-    </div>
+    </form>
   );
 }
