@@ -1,3 +1,4 @@
+// src/components/auth/LoginForm.tsx
 import { FormEvent, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
@@ -5,18 +6,21 @@ import { Button } from "@/components/ui/button";
 import { Eye, EyeOff, LogIn, Crown, Building2, UserPlus2 } from "lucide-react";
 import { getAdminSeed, getCompanySeed, getCreatorSeed } from "@/utils/env";
 
-// (opzionale) se hai l'AuthContext, puoi importarlo e usarlo
-let useAuth: any;
+// (opzionale) usa AuthContext se presente, altrimenti fallback su localStorage
+let useAuth: undefined | (() => {
+  loginWithSeed: (seed: string) => Promise<{ role: Role }>;
+  pathForRole: (role: Role) => string;
+});
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   useAuth = require("@/contexts/AuthContext").useAuth;
 } catch {
-  useAuth = null;
+  // nessun AuthContext: useremo il fallback locale
 }
 
 type Role = "admin" | "company" | "creator" | "operator" | "machine";
 
-function pathForRole(role: Role) {
+function pathForRoleFallback(role: Role) {
   switch (role) {
     case "admin": return "/admin";
     case "company": return "/company";
@@ -26,9 +30,9 @@ function pathForRole(role: Role) {
   }
 }
 
-function resolveRoleBySeed(seed: string): Role {
+function resolveRoleBySeedFallback(seed: string): Role {
   const s = seed.trim();
-  const admin = getAdminSeed();
+  const admin   = getAdminSeed();
   const company = getCompanySeed();
   const creator = getCreatorSeed();
 
@@ -36,59 +40,59 @@ function resolveRoleBySeed(seed: string): Role {
   if (company && s === company) return "company";
   if (creator && s === creator) return "creator";
 
-  // lookup locale opzionale
+  // lookup locale opzionale (registry mock)
   try {
     const members = JSON.parse(localStorage.getItem("members") || "[]") as Array<{ seed?: string; role?: Role }>;
     const found = members.find((m) => (m.seed || "").trim() === s && m.role);
     if (found?.role) return found.role as Role;
-  } catch {}
+  } catch {/* ignore */}
 
   return "company";
 }
 
 export default function LoginForm() {
   const navigate = useNavigate();
-  const auth = useAuth ? useAuth() : null;
+  const auth = useAuth ? useAuth() : undefined;
 
   const [seed, setSeed] = useState("");
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const adminSeed = getAdminSeed();
+  // Env + fallback da localStorage
+  const adminSeed   = getAdminSeed();
   const companySeed = getCompanySeed();
   const creatorSeed = getCreatorSeed();
 
-  const hasAdmin = useMemo(() => Boolean(adminSeed), [adminSeed]);
+  const hasAdmin   = useMemo(() => Boolean(adminSeed),   [adminSeed]);
   const hasCompany = useMemo(() => Boolean(companySeed), [companySeed]);
   const hasCreator = useMemo(() => Boolean(creatorSeed), [creatorSeed]);
 
-  // Log diagnostico (rimuovi dopo)
-  console.log("[LoginForm] hasAdmin?", hasAdmin, "adminSeed:", adminSeed);
-
-  const finalize = async (seedToUse: string) => {
+  const finalizeLogin = async (seedToUse: string) => {
     if (auth) {
-      const user = await auth.loginWithSeed(seedToUse);
-      navigate(auth.pathForRole(user.role), { replace: true });
+      // via AuthContext (preferibile)
+      const u = await auth.loginWithSeed(seedToUse);
+      navigate(auth.pathForRole(u.role) as string, { replace: true });
       return;
     }
-    const role = resolveRoleBySeed(seedToUse);
+    // fallback locale
+    const role = resolveRoleBySeedFallback(seedToUse);
     localStorage.setItem("currentRole", role);
-    navigate(pathForRole(role), { replace: true });
+    navigate(pathForRoleFallback(role), { replace: true });
   };
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!seed.trim()) return;
     setLoading(true);
-    await finalize(seed);
+    await finalizeLogin(seed);
   };
 
-  const quick = async (which: "admin" | "company" | "creator") => {
+  const quickLogin = async (which: "admin" | "company" | "creator") => {
     const map = { admin: adminSeed, company: companySeed, creator: creatorSeed } as const;
-    const val = map[which];
-    if (!val) return;
-    setSeed(val);
-    await finalize(val);
+    const value = map[which];
+    if (!value) return;
+    setSeed(value);
+    await finalizeLogin(value);
   };
 
   return (
@@ -108,6 +112,7 @@ export default function LoginForm() {
             variant="secondary"
             className="border-zinc-700 bg-[#0C1426] text-zinc-200"
             onClick={() => setShow((v) => !v)}
+            title={show ? "Nascondi" : "Mostra"}
           >
             {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </Button>
@@ -121,13 +126,14 @@ export default function LoginForm() {
           {loading ? "Verifico…" : "Continua"}
         </Button>
 
+        {/* Quick-login demo */}
         {hasAdmin && (
           <Button
             type="button"
             variant="outline"
             className="w-full text-base border-emerald-500/40 hover:bg-emerald-500/10"
-            onClick={() => quick("admin")}
-            title="Accedi con la seed Admin configurata"
+            onClick={() => quickLogin("admin")}
+            title="Accedi con la seed Admin (env/localStorage)"
           >
             <Crown className="h-4 w-4 mr-2" />
             Accedi come Admin (demo)
@@ -137,13 +143,25 @@ export default function LoginForm() {
         {(hasCompany || hasCreator) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {hasCompany && (
-              <Button type="button" variant="secondary" className="w-full text-base" onClick={() => quick("company")}>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full text-base"
+                onClick={() => quickLogin("company")}
+                title="Accedi con la seed Azienda (env/localStorage)"
+              >
                 <Building2 className="h-4 w-4 mr-2" />
                 Accedi come Azienda (demo)
               </Button>
             )}
             {hasCreator && (
-              <Button type="button" variant="secondary" className="w-full text-base" onClick={() => quick("creator")}>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full text-base"
+                onClick={() => quickLogin("creator")}
+                title="Accedi con la seed Creator (env/localStorage)"
+              >
                 <UserPlus2 className="h-4 w-4 mr-2" />
                 Accedi come Creator (demo)
               </Button>
