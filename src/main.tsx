@@ -1,33 +1,15 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-import "./index.css";
+import { StrictMode } from "react"
+import { createRoot } from "react-dom/client"
+import "./index.css"
+import App from "./App"
 
-import { useUI } from "@/stores/uiStore";
-import { AuthProvider } from "@/contexts/AuthContext"; // ⬅️ nuovo
+const rootEl = document.getElementById("root")
+if (!rootEl) {
+  throw new Error('Elemento #root non trovato. Assicurati che index.html contenga <div id="root"></div>.')
+}
 
-// Inizializza il tema il prima possibile
-(function initThemeEarly() {
-  try {
-    const saved = (localStorage.getItem("theme") as "light" | "dark" | "system") || "system";
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const isDark = saved === "dark" || (saved === "system" && prefersDark);
-    document.documentElement.classList.toggle("dark", isDark);
-  } catch {}
-})();
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    {/* ⬇️ Avvolge tutta l’app per esporre loginWithSeed, user, pathForRole, ecc. */}
-    <AuthProvider>
-      <App />
-    </AuthProvider>
-  </React.StrictMode>
-);
-
-// Inizializzazione completa (listener changes) dopo il mount
-requestAnimationFrame(() => {
-  try {
-    useUI.getState().initTheme();
-  } catch {}
-});
+createRoot(rootEl).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+)

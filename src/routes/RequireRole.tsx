@@ -1,33 +1,17 @@
-import { Navigate, useLocation } from "react-router-dom";
-import { useAuthStore } from "@/stores/authStore";
-
-type Role = "admin" | "company" | "creator" | "operator" | "machine";
+import type { Role } from "@/types/auth"
+import { useAuth } from "@/hooks/useAuth"
+import { Navigate } from "react-router-dom"
+import { ROUTES } from "@/utils/constants"
 
 export default function RequireRole({
-  allow,
+  role,
   children,
 }: {
-  allow: Role[];
-  children: JSX.Element;
+  role: Role
+  children: React.ReactNode
 }) {
-  const { user } = useAuthStore();
-  const location = useLocation();
-
-  if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-  if (!allow.includes(user.role)) {
-    const fallback =
-      user.role === "admin"
-        ? "/admin"
-        : user.role === "company"
-        ? "/company"
-        : user.role === "creator"
-        ? "/creator"
-        : user.role === "operator"
-        ? "/operator"
-        : "/machine";
-    return <Navigate to={fallback} replace />;
-  }
-  return children;
+  const { currentUser } = useAuth()
+  if (!currentUser) return <Navigate to={ROUTES.login} replace />
+  if (currentUser.role !== role) return <Navigate to={ROUTES.login} replace />
+  return <>{children}</>
 }

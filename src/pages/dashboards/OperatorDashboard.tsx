@@ -1,26 +1,36 @@
-import React from "react";
-import { Card, CardContent } from "@/components/ui/card";
+// src/pages/dashboards/OperatorDashboard.tsx
+import * as React from "react";
+import { useAuthStore } from "@/stores/authStore";
+import EventList from "@/components/events/EventList";
+import EventForm from "@/components/events/EventForm";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
 export default function OperatorDashboard() {
+  const { currentUser } = useAuthStore();
+  const [listKey, setListKey] = React.useState(0); // forza il remount della lista
+
   return (
-    <div className="p-6 grid gap-4 md:grid-cols-2">
-      <Card className="rounded-2xl shadow-sm">
-        <CardContent className="p-6">
-          <h2 className="text-lg font-semibold">Benvenuto in Operator</h2>
-          <p className="text-sm text-muted-foreground mt-2">Dashboard placeholder per allineare la UI.</p>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Crea evento (assegnato a me)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EventForm
+            assignedToDid={currentUser?.did}
+            compact
+            onCreated={() => setListKey((k) => k + 1)} // refresh "I miei task"
+          />
         </CardContent>
       </Card>
-      <Card className="rounded-2xl shadow-sm">
-        <CardContent className="p-6">
-          <h3 className="font-medium">Prossimi step</h3>
-          <ul className="list-disc list-inside text-sm mt-2 space-y-1">
-            <li>Moduli Crediti</li>
-            <li>Prodotti & BOM</li>
-            <li>DPP-VC (crea/verifica)</li>
-            <li>Eventi & Tracciabilità</li>
-          </ul>
-        </CardContent>
-      </Card>
+
+      <EventList
+        key={listKey}
+        mode="assignee"
+        title="I miei task"
+        enableActions
+        showIntegrity
+      />
     </div>
   );
 }
