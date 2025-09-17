@@ -1,0 +1,16 @@
+{
+  "$id": "https://trustup.local/schemas/iso_14001_certificate.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ISO 14001 — Certificazione Organizzazione",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "issuerBody": { "type": "string" },
+    "certificateNumber": { "type": "string" },
+    "validFrom": { "type": "string", "format": "date" },
+    "validTo": { "type": "string", "format": "date" },
+    "evidenceLink": { "type": "string", "format": "uri" },
+    "scope": { "type": "string" }
+  },
+  "required": ["issuerBody", "certificateNumber", "validFrom", "validTo"]
+}
