@@ -1,0 +1,55 @@
+{
+  "$id": "https://trustup.local/schemas/dpp_base.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EU Digital Product Passport — Base",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "productId": { "type": "string", "description": "DID/URI del prodotto" },
+    "productName": { "type": "string" },
+    "classifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "system": { "type": "string", "enum": ["UNSPSC", "CPV", "CPC"] },
+          "code": { "type": "string" },
+          "version": { "type": "string" }
+        },
+        "required": ["system", "code"]
+      }
+    },
+    "primaryFacility": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gln": { "type": "string", "pattern": "^\\d{8,14}$" },
+        "sgln": { "type": "string" },
+        "did": { "type": "string" }
+      },
+      "anyOf": [
+        { "required": ["gln"] },
+        { "required": ["sgln"] },
+        { "required": ["did"] }
+      ]
+    },
+    "traceabilityReferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": { "type": "string", "enum": ["component", "batch", "lot", "event", "doc"] },
+          "id": { "type": "string" },
+          "uri": { "type": "string", "format": "uri" }
+        },
+        "anyOf": [
+          { "required": ["id"] },
+          { "required": ["uri"] }
+        ]
+      }
+    }
+  },
+  "required": ["productId", "productName"]
+}
