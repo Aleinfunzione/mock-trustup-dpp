@@ -1,9 +1,22 @@
+// /src/services/api/products.ts
+// Mock-only su localStorage: prodotti, tipi prodotto e gestione "pillole" attributi
+// per il flusso Catalogo → Form dinamico → Aggregazione { gs1, iso, euDpp }.
+//
+// NOTE:
+// - Manteniamo la compatibilità con il tuo file esistente (tipi importati).
+// - Estendiamo Product localmente con campi opzionali: attributesPills[] e dppDraft.
+// - La validazione AJV per i tipi prodotto continua a basarsi su "attributes" (object),
+//   mentre le pillole vivono in attributesPills[] e generano dppDraft (aggregato).
+
 import { STORAGE_KEYS, PRODUCT_TYPES_BY_CATEGORY } from "@/utils/constants";
 import { safeGet, safeSet } from "@/utils/storage";
 import type { Product, BomNode, ProductId } from "@/types/product";
 import type { ProductType, JsonSchema } from "@/types/productType";
 import Ajv from "ajv";
 import { createEvent } from "@/services/api/events";
+
+import type { PillInstance } from "@/config/attributeCatalog";
+import { aggregateAttributes } from "@/services/dpp/aggregate";
 
 /* ---------------- utils ---------------- */
 
@@ -24,10 +37,22 @@ async function sha256Hex(input: string): Promise<string> {
   return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/* ---------------- persistence ---------------- */
+/* ---------------- tipi estesi (solo interni a questo modulo) ---------------- */
 
-type ProductsMap = Record<string, Product>;
+type ProductExt = Product & {
+  /** Pillole compilate dal Catalogo Attributi (RJSF). */
+  attributesPills?: PillInstance[];
+  /**
+   * Draft DPP aggregato da pillole (firmabile nella VC DPP come credentialSubject).
+   * Struttura: { gs1: any; iso: any; euDpp: any }
+   */
+  dppDraft?: any;
+};
+
+type ProductsMap = Record<string, ProductExt>;
 type ProductTypesMap = Record<string, ProductType>;
+
+/* ---------------- persistence ---------------- */
 
 function getProductsMap(): ProductsMap {
   return safeGet<ProductsMap>(STORAGE_KEYS.products, {});
@@ -48,11 +73,11 @@ function getProductTypesMap(): ProductTypesMap {
         type: "object",
         properties: {
           name: { type: "string" },
-          sku: { type: "string" },
+          sku: { type: "string" }
         },
         required: ["name"],
-        additionalProperties: true,
-      },
+        additionalProperties: true
+      }
     };
     safeSet(STORAGE_KEYS.productTypes, map);
   }
@@ -62,7 +87,7 @@ function saveProductTypesMap(map: ProductTypesMap): void {
   safeSet(STORAGE_KEYS.productTypes, map);
 }
 
-/* ---------------- validation ---------------- */
+/* ---------------- validation (per tipi prodotto) ---------------- */
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 const compiledCache = new Map<string, ReturnType<typeof ajv.compile>>();
@@ -85,7 +110,9 @@ export function validateProductAgainstType(
   if (!type?.schema) return { ok: true };
   const validate = compile(type.schema);
   if (!validate) return { ok: true };
-  const ok = validate(prod.attributes ?? {});
+  // NB: la validazione del TIPO continua a riferirsi a "attributes" (object),
+  // NON alle pillole. Le pillole generano dppDraft separato.
+  const ok = validate((prod as any).attributes ?? {});
   if (!ok) {
     const msg = (validate.errors ?? [])
       .map((e) => `${e.instancePath || "attributes"} ${e.message}`)
@@ -97,18 +124,19 @@ export function validateProductAgainstType(
 
 export function validateBOM(root: BomNode[]): { ok: boolean; error?: string } {
   const ids = new Set<string>();
+
   function visit(node: BomNode, stack: string[]): boolean {
     if (!node.id) return false;
     if (ids.has(node.id)) return false; // id duplicato
     ids.add(node.id);
 
-    const hasRef = !!node.componentRef;
-    const hasName = !!node.placeholderName;
+    const hasRef = !!(node as any).componentRef;
+    const hasName = !!(node as any).placeholderName;
     if (hasRef && hasName) return false; // alternativi, non entrambi
 
+    const children = (node.children ?? []) as BomNode[];
     if (stack.includes(node.id)) return false; // ciclo
 
-    const children = node.children ?? [];
     for (const ch of children) {
       const ok = visit(ch, [...stack, node.id]);
       if (!ok) return false;
@@ -124,7 +152,15 @@ export function validateBOM(root: BomNode[]): { ok: boolean; error?: string } {
   return { ok: true };
 }
 
-/* ---------------- API Products ---------------- */
+/* ---------------- helpers pillole/aggregato ---------------- */
+
+/** Ricalcola e salva il dppDraft a partire da attributesPills[] */
+function syncDppDraft(p: ProductExt) {
+  const aggregated = aggregateAttributes(p.attributesPills || []);
+  p.dppDraft = aggregated;
+}
+
+/* ---------------- API Products (compat + estensioni) ---------------- */
 
 export interface CreateProductInput {
   companyDid: string;
@@ -146,6 +182,11 @@ export function getProduct(id: ProductId): Product | undefined {
   return map[id];
 }
 
+/** Wrapper richiesto dai componenti della Fase 1 */
+export function getProductById(id: string): ProductExt | null {
+  return (getProductsMap()[id] as ProductExt) || null;
+}
+
 export function deleteProduct(id: ProductId): void {
   const map = getProductsMap();
   const existing = map[id];
@@ -157,7 +198,7 @@ export function deleteProduct(id: ProductId): void {
     productId: existing.id,
     companyDid: existing.companyDid,
     actorDid: existing.createdByDid,
-    data: { deleted: true },
+    data: { deleted: true }
   });
 
   delete map[id];
@@ -169,22 +210,25 @@ export function updateProduct(
   patch: Partial<Omit<Product, "id" | "companyDid" | "createdByDid" | "createdAt">>
 ): Product {
   const map = getProductsMap();
-  const existing = map[id];
+  const existing = map[id] as ProductExt | undefined;
   if (!existing) throw new Error("Prodotto inesistente");
 
-  const next: Product = {
+  const next: ProductExt = {
     ...existing,
     ...patch,
-    updatedAt: nowISO(),
+    updatedAt: nowISO()
   };
 
-  // validazioni
+  // validazioni (solo su "attributes" oggetto e BOM)
   const types = getProductTypesMap();
   const type = types[next.typeId];
   const v1 = validateProductAgainstType(next, type);
   if (!v1.ok) throw new Error(v1.error);
   const v2 = validateBOM(next.bom ?? []);
   if (!v2.ok) throw new Error(v2.error);
+
+  // mantieni in sync il draft DPP dalle pillole
+  syncDppDraft(next);
 
   map[id] = next;
   saveProductsMap(map);
@@ -195,7 +239,7 @@ export function updateProduct(
     productId: next.id,
     companyDid: next.companyDid,
     actorDid: next.createdByDid,
-    data: { patchKeys: Object.keys(patch ?? {}) },
+    data: { patchKeys: Object.keys(patch ?? {}) }
   });
   if (patch.bom) {
     createEvent({
@@ -203,7 +247,7 @@ export function updateProduct(
       productId: next.id,
       companyDid: next.companyDid,
       actorDid: next.createdByDid,
-      data: { nodes: (patch.bom ?? []).length },
+      data: { nodes: (patch.bom ?? []).length }
     });
   }
 
@@ -212,18 +256,23 @@ export function updateProduct(
 
 export function createProduct(input: CreateProductInput): Product {
   const id = `prd_${randomHex(8)}`;
-  const product: Product = {
+  const product: ProductExt = {
     id,
     companyDid: input.companyDid,
     createdByDid: input.createdByDid,
     name: input.name,
     sku: input.sku,
     typeId: input.typeId,
-    attributes: input.attributes ?? {},
+    // Attributi classici per schema del tipo (rimangono oggetto):
+    attributes: (input.attributes as any) ?? {},
+    // BOM e pillole vuote all'inizio
     bom: input.bom ?? [],
+    attributesPills: [],
+    // Aggregato iniziale vuoto
+    dppDraft: { gs1: {}, iso: {}, euDpp: {} },
     createdAt: nowISO(),
     updatedAt: nowISO(),
-    isPublished: false,
+    isPublished: false
   };
 
   const types = getProductTypesMap();
@@ -231,8 +280,11 @@ export function createProduct(input: CreateProductInput): Product {
   const v1 = validateProductAgainstType(product, type);
   if (!v1.ok) throw new Error(v1.error);
 
-  const v2 = validateBOM(product.bom);
+  const v2 = validateBOM(product.bom ?? []);
   if (!v2.ok) throw new Error(v2.error);
+
+  // Sync draft (per completezza, anche se non ci sono pillole)
+  syncDppDraft(product);
 
   const map = getProductsMap();
   map[id] = product;
@@ -244,7 +296,7 @@ export function createProduct(input: CreateProductInput): Product {
     productId: product.id,
     companyDid: product.companyDid,
     actorDid: product.createdByDid,
-    data: { name: product.name, typeId: product.typeId },
+    data: { name: product.name, typeId: product.typeId }
   });
 
   return product;
@@ -278,16 +330,84 @@ export function upsertProductType(pt: ProductType): ProductType {
   return pt;
 }
 
+/* ---------------- Pillole attributi (Catalogo) ---------------- */
+
+// addPill
+export function addPill(productId: string, pill: PillInstance) {
+  const map = getProductsMap();
+  const p = map[productId] as ProductExt | undefined;
+  if (!p) throw new Error("Prodotto non trovato");
+  p.attributesPills = p.attributesPills || [];
+  p.attributesPills.push(pill);
+  syncDppDraft(p);
+  saveProductsMap(map);
+
+  createEvent({
+    type: "product.updated",
+    productId: p.id,
+    companyDid: p.companyDid,
+    actorDid: p.createdByDid,
+    data: { action: "pill.added", pillId: pill.id, catalogId: pill.catalogId, namespace: pill.namespace },
+  });
+}
+
+// updatePill
+export function updatePill(productId: string, pillId: string, data: any) {
+  const map = getProductsMap();
+  const p = map[productId] as ProductExt | undefined;
+  if (!p || !p.attributesPills) throw new Error("Pillola non trovata");
+  const idx = p.attributesPills.findIndex((x) => x.id === pillId);
+  if (idx === -1) throw new Error("Pillola non trovata");
+  p.attributesPills[idx] = { ...p.attributesPills[idx], data, updatedAt: nowISO() };
+  syncDppDraft(p);
+  saveProductsMap(map);
+
+  createEvent({
+    type: "product.updated",
+    productId: p.id,
+    companyDid: p.companyDid,
+    actorDid: p.createdByDid,
+    data: { action: "pill.updated", pillId },
+  });
+}
+
+// removePill
+export function removePill(productId: string, pillId: string) {
+  const map = getProductsMap();
+  const p = map[productId] as ProductExt | undefined;
+  if (!p || !p.attributesPills) return;
+  p.attributesPills = p.attributesPills.filter((x) => x.id !== pillId);
+  syncDppDraft(p);
+  saveProductsMap(map);
+
+  createEvent({
+    type: "product.updated",
+    productId: p.id,
+    companyDid: p.companyDid,
+    actorDid: p.createdByDid,
+    data: { action: "pill.removed", pillId },
+  });
+}
+
+/** Ritorna l’aggregato { gs1, iso, euDpp } calcolato dalle pillole del prodotto. */
+export function getAggregatedAttributes(productId: string) {
+  const p = getProductById(productId);
+  return aggregateAttributes((p as ProductExt | null)?.attributesPills || []);
+}
+
 /* ---------------- Publish DPP (MOCK) ---------------- */
+// NB: la pubblicazione mock NON firma i link esterni; la proof resterà stabile
+// se in futuro aggiungi/rimuovi metadati esterni (VC Org/Eventi).
 
 export async function publishDPP(productId: ProductId): Promise<Product> {
   const map = getProductsMap();
-  const prod = map[productId];
+  const prod = map[productId] as ProductExt | undefined;
   if (!prod) throw new Error("Prodotto inesistente");
 
-  const hash = await sha256Hex(JSON.stringify({ id: prod.id, at: Date.now(), prod }));
-  prod.isPublished = true;
-  prod.dppId = `vc:mock:${hash.slice(0, 24)}`;
+  // Bozza hash semplice del payload "pubblicato".
+  const hash = await sha256Hex(JSON.stringify({ id: prod.id, at: Date.now(), dppDraft: prod.dppDraft }));
+  (prod as any).isPublished = true;
+  (prod as any).dppId = `vc:mock:${hash.slice(0, 24)}`;
   prod.updatedAt = nowISO();
 
   map[productId] = prod;
@@ -297,9 +417,9 @@ export async function publishDPP(productId: ProductId): Promise<Product> {
   createEvent({
     type: "dpp.published",
     productId: prod.id,
-    companyDid: prod.companyDid,
-    actorDid: prod.createdByDid,
-    data: { dppId: prod.dppId },
+    companyDid: (prod as any).companyDid,
+    actorDid: (prod as any).createdByDid,
+    data: { dppId: (prod as any).dppId }
   });
 
   return prod;
