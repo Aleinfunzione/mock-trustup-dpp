@@ -1,6 +1,16 @@
+// src/services/api/events.ts
 import { STORAGE_KEYS } from "@/utils/constants";
 import { safeGet, safeSet } from "@/utils/storage";
 import type { ProductEvent, EventType } from "@/types/event";
+
+/**
+ * NOTE sui tipi evento:
+ * Assicura che in `@/types/event` siano presenti anche:
+ *  - "product.pill.added"
+ *  - "product.pill.updated"
+ *  - "product.pill.removed"
+ * In caso di errori TS su EventType, estendere l'unione in quel file.
+ */
 
 type EventsMap = Record<string, ProductEvent>; // indicizzato per eventId
 
@@ -50,8 +60,8 @@ function setEvent(
 
 /**
  * Crea un evento (MOCK).
- * Accetta un input con eventuali campi UI (notes, assignedToDid, status) che verranno
- * salvati dentro `data.*` mantenendo il tuo tipo ProductEvent invariato.
+ * Accetta anche campi UI extra (notes, assignedToDid, status) che vengono
+ * salvati in `data.*` senza toccare la shape di ProductEvent.
  */
 export function createEvent(
   input:
@@ -62,11 +72,10 @@ export function createEvent(
         status?: "open" | "in_progress" | "done" | string;
       })
 ): ProductEvent {
-  const map = getEventsMap();
   const id = `evt_${randomHex(10)}`;
 
   const base: Omit<ProductEvent, "id" | "timestamp"> = {
-    type: (input as any).type,
+    type: (input as any).type as EventType,
     productId: (input as any).productId,
     companyDid: (input as any).companyDid,
     actorDid: (input as any).actorDid,
@@ -74,10 +83,11 @@ export function createEvent(
     related: (input as any).related,
   };
 
+  // Merge dei campi UI opzionali nello spazio data.*
   const ui = input as any;
   base.data = {
     ...(base.data ?? {}),
-    status: ui.status ?? "open",
+    status: ui.status ?? (base.data?.status as any) ?? "open",
     notes: ui.notes ?? (base.data?.notes as any),
     assignedToDid: ui.assignedToDid ?? (base.data?.assignedToDid as any),
   };
@@ -88,34 +98,32 @@ export function createEvent(
     ...base,
   };
 
+  const map = getEventsMap();
   map[id] = evt;
   saveEventsMap(map);
+
   return evt;
 }
 
 export function getEvent(id: string): ProductEvent | undefined {
-  const map = getEventsMap();
-  return map[id];
+  return getEventsMap()[id];
 }
 
 export function listEventsByProduct(productId: string): ProductEvent[] {
-  const map = getEventsMap();
-  return Object.values(map).filter((e) => e.productId === productId);
+  return listAllEvents().filter((e) => e.productId === productId);
 }
 
 export function listEventsByCompany(
   companyDid: string,
   type?: EventType
 ): ProductEvent[] {
-  const map = getEventsMap();
-  return Object.values(map).filter(
+  return listAllEvents().filter(
     (e) => e.companyDid === companyDid && (type ? e.type === type : true)
   );
 }
 
 export function listEventsByType(type: EventType): ProductEvent[] {
-  const map = getEventsMap();
-  return Object.values(map).filter((e) => e.type === type);
+  return listAllEvents().filter((e) => e.type === type);
 }
 
 /* ---------------- API aggiuntive per i componenti ---------------- */
@@ -143,6 +151,11 @@ export function updateEventStatus(
 /** Verifica integrità evento (mock basica) */
 export function verifyEventIntegrity(evt: ProductEvent): boolean {
   return !!(evt && evt.id && evt.productId && evt.type);
+}
+
+/** Pulisce tutti gli eventi (utile nei test) */
+export function clearEvents(): void {
+  saveEventsMap({});
 }
 
 /** Facoltativo: util per debug/ispezione */
