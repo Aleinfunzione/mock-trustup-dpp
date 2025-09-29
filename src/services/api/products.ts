@@ -3,10 +3,9 @@
 // per il flusso Catalogo → Form dinamico → Aggregazione { gs1, iso, euDpp }.
 //
 // NOTE:
-// - Manteniamo la compatibilità con il tuo file esistente (tipi importati).
-// - Estendiamo Product localmente con campi opzionali: attributesPills[] e dppDraft.
-// - La validazione AJV per i tipi prodotto continua a basarsi su "attributes" (object),
-//   mentre le pillole vivono in attributesPills[] e generano dppDraft (aggregato).
+// - Compatibile col codice esistente (tipi importati).
+// - Estende Product localmente: attributesPills[] e dppDraft.
+// - La validazione AJV del TIPO usa "attributes" (object); le pillole generano dppDraft.
 
 import { STORAGE_KEYS, PRODUCT_TYPES_BY_CATEGORY } from "@/utils/constants";
 import { safeGet, safeSet } from "@/utils/storage";
@@ -16,7 +15,7 @@ import Ajv from "ajv";
 import { createEvent } from "@/services/api/events";
 
 import type { PillInstance } from "@/config/attributeCatalog";
-import { aggregateAttributes } from "@/services/dpp/aggregate";
+import { aggregateAttributes } from "@/services/dpp/attributes";
 
 /* ---------------- utils ---------------- */
 
@@ -39,7 +38,7 @@ async function sha256Hex(input: string): Promise<string> {
 
 /* ---------------- tipi estesi (solo interni a questo modulo) ---------------- */
 
-type ProductExt = Product & {
+export type ProductExt = Product & {
   /** Pillole compilate dal Catalogo Attributi (RJSF). */
   attributesPills?: PillInstance[];
   /**
@@ -73,11 +72,11 @@ function getProductTypesMap(): ProductTypesMap {
         type: "object",
         properties: {
           name: { type: "string" },
-          sku: { type: "string" }
+          sku: { type: "string" },
         },
         required: ["name"],
-        additionalProperties: true
-      }
+        additionalProperties: true,
+      },
     };
     safeSet(STORAGE_KEYS.productTypes, map);
   }
@@ -172,6 +171,12 @@ export interface CreateProductInput {
   bom?: BomNode[];
 }
 
+// Elenco completo
+export function listProducts(): Product[] {
+  const map = getProductsMap();
+  return Object.values(map);
+}
+
 export function listProductsByCompany(companyDid: string): Product[] {
   const map = getProductsMap();
   return Object.values(map).filter((p) => p.companyDid === companyDid);
@@ -182,7 +187,7 @@ export function getProduct(id: ProductId): Product | undefined {
   return map[id];
 }
 
-/** Wrapper richiesto dai componenti della Fase 1 */
+/** Wrapper richiesto dai componenti legacy */
 export function getProductById(id: string): ProductExt | null {
   return (getProductsMap()[id] as ProductExt) || null;
 }
@@ -198,7 +203,7 @@ export function deleteProduct(id: ProductId): void {
     productId: existing.id,
     companyDid: existing.companyDid,
     actorDid: existing.createdByDid,
-    data: { deleted: true }
+    data: { deleted: true },
   });
 
   delete map[id];
@@ -216,7 +221,7 @@ export function updateProduct(
   const next: ProductExt = {
     ...existing,
     ...patch,
-    updatedAt: nowISO()
+    updatedAt: nowISO(),
   };
 
   // validazioni (solo su "attributes" oggetto e BOM)
@@ -239,7 +244,7 @@ export function updateProduct(
     productId: next.id,
     companyDid: next.companyDid,
     actorDid: next.createdByDid,
-    data: { patchKeys: Object.keys(patch ?? {}) }
+    data: { patchKeys: Object.keys(patch ?? {}) },
   });
   if (patch.bom) {
     createEvent({
@@ -247,11 +252,17 @@ export function updateProduct(
       productId: next.id,
       companyDid: next.companyDid,
       actorDid: next.createdByDid,
-      data: { nodes: (patch.bom ?? []).length }
+      data: { nodes: (patch.bom ?? []).length },
     });
   }
 
   return next;
+}
+
+export function setBOM(productId: ProductId, bom: BomNode[]) {
+  const v = validateBOM(bom ?? []);
+  if (!v.ok) throw new Error(v.error);
+  return updateProduct(productId, { bom });
 }
 
 export function createProduct(input: CreateProductInput): Product {
@@ -272,7 +283,7 @@ export function createProduct(input: CreateProductInput): Product {
     dppDraft: { gs1: {}, iso: {}, euDpp: {} },
     createdAt: nowISO(),
     updatedAt: nowISO(),
-    isPublished: false
+    isPublished: false,
   };
 
   const types = getProductTypesMap();
@@ -296,7 +307,7 @@ export function createProduct(input: CreateProductInput): Product {
     productId: product.id,
     companyDid: product.companyDid,
     actorDid: product.createdByDid,
-    data: { name: product.name, typeId: product.typeId }
+    data: { name: product.name, typeId: product.typeId },
   });
 
   return product;
@@ -419,7 +430,7 @@ export async function publishDPP(productId: ProductId): Promise<Product> {
     productId: prod.id,
     companyDid: (prod as any).companyDid,
     actorDid: (prod as any).createdByDid,
-    data: { dppId: (prod as any).dppId }
+    data: { dppId: (prod as any).dppId },
   });
 
   return prod;

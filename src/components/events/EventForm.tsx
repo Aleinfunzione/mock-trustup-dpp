@@ -1,5 +1,6 @@
+// src/components/events/EventForm.tsx
 import * as React from "react";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,13 @@ import { useProducts } from "@/hooks/useProducts";
 import { useAuthStore } from "@/stores/authStore";
 import { EVENT_TYPES } from "@/utils/constants";
 import type { Product, BomNode } from "@/types/product";
-import { getProduct as getProductSvc } from "@/services/api/products";
+import {
+  getProduct as getProductSvc,
+  listProductsByCompany,
+} from "@/services/api/products";
+
+// ---- identity (fallback robusto ai vari nomi funzione/campo)
+import * as IdentityApi from "@/services/api/identity";
 
 type EventFormProps = {
   defaultProductId?: string;
@@ -27,9 +34,70 @@ type Scope = "product" | "bom";
 type BomOption = {
   id: string;
   label: string;
-  path: string[];     // path di id dal root al nodo
-  isGroup: boolean;   // true se ha children
+  path: string[];
+  isGroup: boolean;
 };
+
+type Actor = {
+  did: string;
+  role?: string;
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  fullName?: string;
+  name?: string;
+  username?: string;
+  email?: string;
+  [k: string]: any;
+};
+
+function isOperatorRole(r?: string) {
+  const x = (r || "").toLowerCase();
+  return x.includes("operator") || x.includes("machine") || x.includes("macchin");
+}
+
+async function getCompanyActors(companyDid: string): Promise<Actor[]> {
+  const api: any = IdentityApi as any;
+  const fn =
+    api.listCompanyMembers ||
+    api.listMembersByCompany ||
+    api.listByCompany ||
+    api.listMembers ||
+    api.list ||
+    null;
+
+  try {
+    const res = typeof fn === "function" ? fn(companyDid) : [];
+    const arr = Array.isArray(res) ? res : await Promise.resolve(res);
+    if (!Array.isArray(arr)) return [];
+    return arr.map((a: any) => ({
+      did: a.did || a.id || "",
+      role: a.role || a.type || a.kind,
+      firstName: a.firstName || a.givenName || a.nome,
+      lastName: a.lastName || a.familyName || a.cognome,
+      displayName: a.displayName || a.name || a.fullName,
+      fullName: a.fullName,
+      username: a.username,
+      email: a.email,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function actorLabel(a: Actor) {
+  const nameCandidates = [
+    a.displayName,
+    [a.firstName, a.lastName].filter(Boolean).join(" ").trim() || undefined,
+    a.fullName,
+    a.name,
+    a.username,
+    a.email ? String(a.email).split("@")[0] : undefined,
+  ].filter(Boolean) as string[];
+  const name = nameCandidates.find((s) => s && s !== a.did) || "Operatore";
+  const role = a.role ? ` • ${a.role}` : "";
+  return `${name} — ${a.did}${role}`;
+}
 
 export default function EventForm({
   defaultProductId,
@@ -42,30 +110,69 @@ export default function EventForm({
   const { listMine } = useProducts();
   const { createEvent } = useEvents();
 
+  // prodotto / lista prodotti
   const [productId, setProductId] = useState<string>(defaultProductId ?? "");
+  const [products, setProducts] = useState<Product[]>([]);
+
+  // evento
   const [eventType, setEventType] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
   const [customType, setCustomType] = useState<string>("");
 
-  // Ambito + target BOM
+  // ambito BOM
   const [scope, setScope] = useState<Scope>("product");
   const [targetNodeId, setTargetNodeId] = useState<string>("");
   const [bomOptions, setBomOptions] = useState<BomOption[]>([]);
 
+  // assegnazione
+  const [assignee, setAssignee] = useState<string>("");
+  const [actors, setActors] = useState<Actor[]>([]);
+
+  // vari
   const [submitting, setSubmitting] = useState(false);
 
-  // Sync productId quando cambia defaultProductId (es. cambio rotta)
+  const listMineRef = useRef(listMine);
+  useEffect(() => {
+    listMineRef.current = listMine;
+  }, [listMine]);
+
+  // prefill prodotto se arriva da props (non blocca la select)
   useEffect(() => {
     if (defaultProductId) setProductId(defaultProductId);
   }, [defaultProductId]);
 
-  // Prodotti disponibili (miei)
-  const products: Product[] = useMemo(
-    () => (typeof listMine === "function" ? listMine() : []),
-    [listMine]
-  );
+  // carica prodotti: prima hook, poi fallback per company
+  useEffect(() => {
+    const load = async () => {
+      let list: Product[] = [];
+      try {
+        if (typeof listMineRef.current === "function") {
+          list = (listMineRef.current() as Product[]) || [];
+        }
+      } catch {}
+      if ((!list || list.length === 0) && (currentUser?.companyDid || currentUser?.did)) {
+        try {
+          list = listProductsByCompany(currentUser!.companyDid || currentUser!.did) || [];
+        } catch {}
+      }
+      setProducts(
+        [...(list || [])].sort(
+          (a: any, b: any) => (b?.updatedAt ?? "").localeCompare(a?.updatedAt ?? "")
+        )
+      );
+    };
+    load();
+  }, [currentUser?.companyDid, currentUser?.did]);
 
-  // Carica/flatten BOM del prodotto selezionato
+  // auto-select primo prodotto se vuoto
+  useEffect(() => {
+    if (!defaultProductId && !productId && products.length > 0) {
+      setProductId(products[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, defaultProductId]);
+
+  // carica e flattenta BOM
   useEffect(() => {
     if (!productId) {
       setBomOptions([]);
@@ -76,11 +183,21 @@ export default function EventForm({
     const bom = (prod?.bom ?? []) as BomNode[];
     const opts = flattenBOM(bom);
     setBomOptions(opts);
-    // se il target selezionato non esiste più, reset
     if (targetNodeId && !opts.find((o) => o.id === targetNodeId)) {
       setTargetNodeId("");
     }
-  }, [productId, targetNodeId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId]);
+
+  // carica attori della stessa azienda
+  useEffect(() => {
+    const companyDid = currentUser?.companyDid || currentUser?.did;
+    if (!companyDid) return;
+    getCompanyActors(companyDid).then((all) => {
+      const filtered = all.filter((a) => isOperatorRole(a.role));
+      setActors(filtered);
+    });
+  }, [currentUser?.companyDid, currentUser?.did]);
 
   const allowedTypes =
     Array.isArray(EVENT_TYPES) && EVENT_TYPES.length
@@ -125,15 +242,14 @@ export default function EventForm({
 
       const evt = await createEvent({
         productId,
-        companyDid: currentUser.companyDid ?? currentUser.did, // fallback sicuro
+        companyDid: currentUser.companyDid ?? currentUser.did,
         actorDid: currentUser.did,
         type: effectiveType,
         notes: notes.trim() || undefined,
-        assignedToDid,
-        // Metadati ambito/target: cast per compatibilità con il typing dell'hook
+        assignedToDid: assignedToDid || assignee || undefined,
         ...( {
           data: {
-            scope, // "product" | "bom"
+            scope,
             targetNodeId: scope === "bom" ? targetNodeId : undefined,
             targetPath: scope === "bom" ? targetMeta?.path : undefined,
             targetLabel: scope === "bom" ? targetMeta?.label : undefined,
@@ -154,6 +270,7 @@ export default function EventForm({
       setNotes("");
       setScope("product");
       setTargetNodeId("");
+      setAssignee("");
 
       onCreated?.(evt.id);
     } catch (err: any) {
@@ -179,11 +296,11 @@ export default function EventForm({
           {/* Prodotto */}
           <div className="space-y-2">
             <Label htmlFor="product">Prodotto</Label>
-            <Select value={productId} onValueChange={setProductId} disabled={!!defaultProductId}>
+            <Select value={productId} onValueChange={setProductId}>
               <SelectTrigger id="product" aria-label="Seleziona prodotto">
                 <SelectValue placeholder="Seleziona un prodotto" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[60]">
                 {products.length === 0 ? (
                   <div className="px-3 py-2 text-sm text-muted-foreground">Nessun prodotto disponibile</div>
                 ) : (
@@ -204,7 +321,7 @@ export default function EventForm({
               <SelectTrigger id="type" aria-label="Seleziona tipo evento">
                 <SelectValue placeholder="Seleziona un tipo" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[60]">
                 {allowedTypes.map((t) => (
                   <SelectItem key={t} value={t}>
                     {t}
@@ -227,21 +344,21 @@ export default function EventForm({
             </div>
           )}
 
-          {/* Ambito: Prodotto / Nodo BOM */}
+          {/* Ambito */}
           <div className="space-y-2">
             <Label htmlFor="scope">Ambito</Label>
             <Select value={scope} onValueChange={(v: Scope) => setScope(v)}>
               <SelectTrigger id="scope" aria-label="Seleziona ambito">
                 <SelectValue placeholder="Seleziona l'ambito" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[60]">
                 <SelectItem value="product">Prodotto intero</SelectItem>
                 <SelectItem value="bom">Nodo BOM</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* Nodo BOM (visibile solo se ambito = "bom") */}
+          {/* Nodo BOM */}
           {scope === "bom" && (
             <div className="space-y-2">
               <Label htmlFor="targetNode">Seleziona nodo BOM</Label>
@@ -253,7 +370,7 @@ export default function EventForm({
                 <SelectTrigger id="targetNode" aria-label="Seleziona nodo BOM">
                   <SelectValue placeholder={bomOptions.length ? "Scegli un nodo" : "Nessun nodo disponibile"} />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[60]">
                   {bomOptions.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-muted-foreground">
                       La BOM del prodotto è vuota.
@@ -285,16 +402,38 @@ export default function EventForm({
             />
           </div>
 
-          {/* Assegnazione (solo display se passata come prop) */}
-          {assignedToDid && (
+          {/* Assegnazione */}
+          {assignedToDid ? (
             <div className="space-y-1 text-sm">
               <span className="text-muted-foreground">Assegnato a:</span>{" "}
               <span className="font-mono">{assignedToDid}</span>
             </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="assignee">Assegna a (operatore/macchina)</Label>
+              <Select value={assignee} onValueChange={setAssignee}>
+                <SelectTrigger id="assignee" aria-label="Seleziona assegnatario">
+                  <SelectValue placeholder="Seleziona un operatore o una macchina" />
+                </SelectTrigger>
+                <SelectContent className="z-[60]">
+                  {actors.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      Nessun operatore/macchina disponibile
+                    </div>
+                  ) : (
+                    actors.map((a) => (
+                      <SelectItem key={a.did} value={a.did}>
+                        {actorLabel(a)}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
           )}
 
           <CardFooter className="px-0">
-            <Button type="submit" className="w-full" disabled={!canSubmit}>
+            <Button type="submit" className="w-full" disabled={!canSubmit || submitting}>
               {submitting ? "Salvataggio…" : "Registra evento"}
             </Button>
           </CardFooter>
@@ -305,11 +444,10 @@ export default function EventForm({
 }
 
 /* ---------------- helpers ---------------- */
-
 function flattenBOM(nodes: BomNode[], path: string[] = [], depth = 0): BomOption[] {
   const out: BomOption[] = [];
   for (const n of nodes ?? []) {
-    const labelBase = n.placeholderName?.trim() || n.componentRef || n.id;
+    const labelBase = (n as any).placeholderName?.trim?.() || (n as any).componentRef || n.id;
     const indent = "—".repeat(Math.min(depth, 6));
     const label = (indent ? `${indent} ` : "") + labelBase + (n.children?.length ? " (gruppo)" : "");
     const thisPath = [...path, n.id];

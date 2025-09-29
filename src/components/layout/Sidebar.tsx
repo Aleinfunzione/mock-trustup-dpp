@@ -1,41 +1,48 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { NAV } from "@/components/layout/nav-config";
+
+type NavItem = { to: string; label: string };
+const NAV: Record<string, NavItem[]> = {
+  admin: [{ to: "/admin", label: "Dashboard" }],
+  company: [
+    { to: "/company", label: "Dashboard" },
+    { to: "/company/products", label: "Prodotti" },
+    { to: "/company/events", label: "Eventi" },
+    { to: "/company/islands", label: "Isole" },            // NEW
+    { to: "/company/attributes", label: "Attributi azienda" }
+  ],
+  creator: [
+    { to: "/creator", label: "Dashboard" },
+    { to: "/creator/products", label: "Prodotti" },
+    { to: "/creator/events", label: "Eventi" },
+    { to: "/creator/attributes", label: "Catalogo attributi" } // NEW
+  ],
+  operator: [{ to: "/operator", label: "Dashboard" }],
+  machine: [{ to: "/machine", label: "Dashboard" }],
+};
 
 export default function Sidebar() {
   const { currentUser } = useAuth();
-  const role = currentUser?.role as keyof typeof NAV | undefined;
-
-  // Voci per il ruolo corrente
-  const items = role && NAV[role] ? NAV[role] : [];
-
+  const { pathname } = useLocation();
+  const role = currentUser?.role ?? "creator";
+  const items = NAV[role] ?? [];
   return (
-    <aside className="w-64 border-r p-4 space-y-2 bg-background">
-      {items.length === 0 ? (
-        <div className="text-sm text-muted-foreground">
-          Nessuna sezione disponibile.
-        </div>
-      ) : (
-        <nav className="space-y-1">
-          {items.map((l) => (
-            <NavLink
-              key={l.to}
-              to={l.to}
-              className={({ isActive }) =>
-                [
-                  "block rounded px-3 py-2 text-sm transition-colors",
-                  isActive
-                    ? "bg-muted font-medium"
-                    : "hover:bg-muted/50 text-muted-foreground hover:text-foreground",
-                ].join(" ")
-              }
-              end
-            >
-              {l.label}
-            </NavLink>
-          ))}
-        </nav>
-      )}
-    </aside>
+    <nav className="p-3 space-y-1">
+      {items.map((i) => {
+        const active = pathname === i.to || pathname.startsWith(i.to + "/");
+        return (
+          <NavLink
+            key={i.to}
+            to={i.to}
+            className={
+              "block rounded-xl px-3 py-2 text-sm " +
+              (active ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground")
+            }
+          >
+            {i.label}
+          </NavLink>
+        );
+      })}
+    </nav>
   );
 }

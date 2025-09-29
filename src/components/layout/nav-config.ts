@@ -15,21 +15,23 @@ export const NAV: Record<Role, NavItem[]> = {
     // { to: "/admin/credits", label: "Crediti" }, // quando pronto
   ],
 
-  // COMPANY: Home (riepilogo) + Prodotti + Team
+  // COMPANY: Home (riepilogo) + Prodotti + Team + Eventi + Attributi
   company: [
     { to: ROUTES.company, label: "Home" },
     { to: "/company/products", label: "Prodotti" },
     { to: ROUTES.companyTeam, label: "Team" },
+    { to: "/company/events", label: "Eventi" },       // NEW
+    { to: "/company/attributes", label: "Attributi" } // NEW
     // Futuro:
-    // { to: "/company/events", label: "Eventi" },
     // { to: "/company/credentials", label: "DPP / VC" },
     // { to: "/company/credits", label: "Crediti EPR" },
   ],
 
-  // CREATOR
+  // CREATOR: Dashboard + Prodotti + Eventi
   creator: [
-    { to: ROUTES.creator, label: "Creator" },
+    { to: ROUTES.creator, label: "Dashboard" },
     { to: "/creator/products", label: "Prodotti" },
+    { to: "/creator/events", label: "Eventi" }, // NEW
   ],
 
   // OPERATOR

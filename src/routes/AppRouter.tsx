@@ -5,26 +5,38 @@ import LoginPage from "@/pages/auth/LoginPage";
 import RequireRole from "@/routes/RequireRole";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 
+// Dashboards
 import AdminDashboard from "@/pages/dashboards/AdminDashboard";
-import CompanyDashboard from "@/pages/dashboards/CompanyDashboard";   // Home azienda
-import CompanyTeamPage from "@/pages/company/CompanyTeamPage";        // Team (membri)
+import CompanyDashboard from "@/pages/dashboards/CompanyDashboard";
+import CompanyTeamPage from "@/pages/company/CompanyTeamPage";
 import CreatorDashboard from "@/pages/dashboards/CreatorDashboard";
 import OperatorDashboard from "@/pages/dashboards/OperatorDashboard";
 import MachineDashboard from "@/pages/dashboards/MachineDashboard";
 
-// Prodotti
-import ProductsPage from "@/pages/products/ProductsPage";             // Lista prodotti (Company)
-import CreatorProductsPage from "@/pages/products/CreatorProductsPage"; // Lista prodotti (Creator)
-import ProductDetailPage from "@/pages/products/ProductDetailPage";   // Dettaglio + timeline eventi
+// Company
+import CompanyEventsPage from "@/pages/events/CompanyEventsPage";
+import CompanyAttributesPage from "@/pages/company/CompanyAttributesPage";
+import CompanyIslandsPage from "@/pages/company/CompanyIslandsPage";
+
+// Creator
+import CreatorEventsPage from "@/pages/events/CreatorEventsPage";
+import CreatorProductsPage from "@/pages/products/CreatorProductsPage";
+import CreatorAttributesCatalogPage from "@/pages/creator/CreatorAttributesCatalogPage";
+
+// Prodotti (comuni a company/creator)
+import ProductsPage from "@/pages/products/ProductsPage";
+import ProductDetailPage from "@/pages/products/ProductDetailPage";
+import ProductAttributesPage from "@/pages/products/ProductAttributesPage";
+import DPPViewerPage from "@/pages/products/DPPViewerPage";
 
 export default function AppRouter() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Login pubblico */}
+        {/* Pubblico */}
         <Route path={ROUTES.login} element={<LoginPage />} />
 
-        {/* Sezione protetta + layout comune */}
+        {/* Protetto + layout */}
         <Route element={<DashboardLayout />}>
           {/* Admin */}
           <Route
@@ -53,7 +65,30 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* Lista prodotti (Company) */}
+          <Route
+            path="/company/events"
+            element={
+              <RequireRole role="company">
+                <CompanyEventsPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/company/attributes"
+            element={
+              <RequireRole role="company">
+                <CompanyAttributesPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/company/islands"
+            element={
+              <RequireRole role="company">
+                <CompanyIslandsPage />
+              </RequireRole>
+            }
+          />
           <Route
             path="/company/products"
             element={
@@ -62,12 +97,27 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* Dettaglio prodotto (Company) */}
           <Route
             path="/company/products/:id"
             element={
               <RequireRole role="company">
                 <ProductDetailPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/company/products/:id/attributes"
+            element={
+              <RequireRole role="company">
+                <ProductAttributesPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/company/products/:id/dpp"
+            element={
+              <RequireRole role="company">
+                <DPPViewerPage />
               </RequireRole>
             }
           />
@@ -81,7 +131,14 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* Lista prodotti (Creator) */}
+          <Route
+            path="/creator/events"
+            element={
+              <RequireRole role="creator">
+                <CreatorEventsPage />
+              </RequireRole>
+            }
+          />
           <Route
             path="/creator/products"
             element={
@@ -90,12 +147,35 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* Dettaglio prodotto (Creator) */}
           <Route
             path="/creator/products/:id"
             element={
               <RequireRole role="creator">
                 <ProductDetailPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/creator/products/:id/attributes"
+            element={
+              <RequireRole role="creator">
+                <ProductAttributesPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/creator/products/:id/dpp"
+            element={
+              <RequireRole role="creator">
+                <DPPViewerPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/creator/attributes"
+            element={
+              <RequireRole role="creator">
+                <CreatorAttributesCatalogPage />
               </RequireRole>
             }
           />

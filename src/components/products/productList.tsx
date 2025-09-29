@@ -11,11 +11,11 @@ import { listProductsByCompany, deleteProduct, publishDPP } from "@/services/api
 import type { Product } from "@/types/product";
 
 type Props = {
-  /** facoltativo: callback per aprire il form di creazione */
+  /** Facoltativo: callback per aprire il form di creazione (es. modal esterna) */
   onCreateNew?: () => void;
-  /** facoltativo: callback per aprire il dettaglio/modifica (se non passato, mostra link Dettaglio) */
+  /** Facoltativo: se passato, usa questa callback invece del link per aprire il dettaglio */
   onOpenProduct?: (id: string) => void;
-  /** sola lettura (es. vista Company) */
+  /** Sola lettura (es. vista Company) */
   readOnly?: boolean;
 };
 
@@ -29,13 +29,13 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // base path per il dettaglio prodotto in base al ruolo
-  const detailBasePath =
+  // Base path per dettaglio/attributi (fallback generico se ruolo non previsto)
+  const basePath =
     currentUser?.role === "company"
       ? "/company/products"
       : currentUser?.role === "creator"
       ? "/creator/products"
-      : undefined;
+      : "/products";
 
   function refresh() {
     if (!companyDid) {
@@ -82,7 +82,7 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
     try {
       setBusyId(id);
       setError(null);
-      await publishDPP(id);
+      await Promise.resolve(publishDPP(id));
       refresh();
     } catch (e: any) {
       setError(e?.message ?? "Errore nella pubblicazione DPP");
@@ -109,13 +109,12 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <div className="flex-1 space-y-2">
                 <Label>Cerca</Label>
-                <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, SKU, ID, Type…" />
+                <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, SKU, ID, Tipo…" />
               </div>
-              {!readOnly && (
+              {/* Mostra il bottone sola se c'è una callback (niente disabled) */}
+              {!readOnly && onCreateNew && (
                 <div className="sm:ml-auto">
-                  <Button onClick={onCreateNew} disabled={!onCreateNew}>
-                    Nuovo prodotto
-                  </Button>
+                  <Button onClick={onCreateNew}>Nuovo prodotto</Button>
                 </div>
               )}
             </div>
@@ -124,7 +123,7 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
             <div className="rounded-md border divide-y">
               {filtered.length === 0 ? (
                 <div className="p-4 text-sm text-muted-foreground">
-                  Nessun prodotto. {readOnly ? "" : "Crea il primo con “Nuovo prodotto”."}
+                  Nessun prodotto. {!readOnly && onCreateNew ? "Crea il primo con “Nuovo prodotto”." : ""}
                 </div>
               ) : (
                 filtered.map((p) => (
@@ -134,7 +133,7 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
                         {p.name} {p.sku ? <span className="text-muted-foreground">• {p.sku}</span> : null}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        ID: <span className="font-mono">{p.id}</span> • Type:{" "}
+                        ID: <span className="font-mono">{p.id}</span> • Tipo:{" "}
                         <span className="font-mono">{p.typeId}</span>
                       </div>
                       {p.isPublished ? (
@@ -150,15 +149,21 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
                     </div>
 
                     <div className="flex gap-2 justify-end">
+                      {/* Caratteristiche & Credenziali */}
+                      <Button asChild variant="outline">
+                        <Link to={`${basePath}/${p.id}/attributes`}>Caratteristiche</Link>
+                      </Button>
+
+                      {/* Dettaglio (Apri) */}
                       {onOpenProduct ? (
                         <Button variant="outline" onClick={() => onOpenProduct(p.id)}>
                           Apri
                         </Button>
-                      ) : detailBasePath ? (
+                      ) : (
                         <Button asChild variant="outline">
-                          <Link to={`${detailBasePath}/${p.id}`}>Dettaglio</Link>
+                          <Link to={`${basePath}/${p.id}`}>Apri</Link>
                         </Button>
-                      ) : null}
+                      )}
 
                       {!readOnly && !p.isPublished && (
                         <Button onClick={() => handlePublish(p.id)} disabled={busyId === p.id}>

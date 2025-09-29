@@ -1,4 +1,3 @@
-// /src/components/attributes/AttributeFormDrawer.tsx
 import * as React from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -12,32 +11,57 @@ export type AttributeFormDrawerProps = {
   title: string;
   defaultValue?: any;
   onSubmit: (data: any) => void;
+  open?: boolean;          // controllato dal padre (opzionale)
+  onClose?: () => void;
   trigger?: React.ReactNode;
 };
 
-export default function AttributeFormDrawer({
-  schemaPath,
-  title,
-  defaultValue,
-  onSubmit,
-  trigger,
-}: AttributeFormDrawerProps) {
-  const [open, setOpen] = React.useState(false);
+export default function AttributeFormDrawer(props: AttributeFormDrawerProps) {
+  const { schemaPath, title, defaultValue, onSubmit, trigger } = props;
+
   const [schema, setSchema] = React.useState<any | null>(null);
   const [errors, setErrors] = React.useState<string[]>([]);
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
+
+  const isControlled = typeof props.open === "boolean";
+  const open = isControlled ? (props.open as boolean) : uncontrolledOpen;
 
   React.useEffect(() => {
-    if (open) {
-      loadSchema(schemaPath)
-        .then(setSchema)
-        .catch((e) => setErrors([String(e)]));
-    }
+    if (!open) return;
+    let active = true;
+    loadSchema(schemaPath)
+      .then((s) => {
+        if (active) setSchema(s);
+      })
+      .catch((e) => setErrors([String(e)]));
+    return () => {
+      active = false;
+      setSchema(null);
+      setErrors([]);
+    };
   }, [open, schemaPath]);
 
+  function handleOpenChange(next: boolean) {
+    if (isControlled) {
+      if (!next) props.onClose?.();
+    } else {
+      setUncontrolledOpen(next);
+    }
+  }
+
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>{trigger ?? <Button variant="outline" size="sm">Compila attributi</Button>}</SheetTrigger>
-      <SheetContent className="w-[640px] sm:w-[640px]">
+    <Sheet open={open} onOpenChange={handleOpenChange}>
+      {!isControlled && (
+        <SheetTrigger asChild>
+          {trigger ?? (
+            <Button variant="outline" size="sm">
+              Compila attributi
+            </Button>
+          )}
+        </SheetTrigger>
+      )}
+      {/* larghezza fissa + stacking sicuro */}
+      <SheetContent className="w-[640px] sm:w-[640px] z-[70]">
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
         </SheetHeader>
@@ -52,21 +76,22 @@ export default function AttributeFormDrawer({
               formData={defaultValue}
               liveValidate
               onChange={(e) => {
-                const r = validateData(schema, e.formData);
-                setErrors(formatAjvErrors(r.errors));
+                const r = validateData(schema, e.formData) as { ok: boolean; errors?: any[] };
+                setErrors(formatAjvErrors(r.errors ?? []));
               }}
               onSubmit={(e) => {
-                const r = validateData(schema, e.formData);
+                const r = validateData(schema, e.formData) as { ok: boolean; errors?: any[] };
                 if (!r.ok) {
-                  setErrors(formatAjvErrors(r.errors));
+                  setErrors(formatAjvErrors(r.errors ?? []));
                   return;
                 }
                 onSubmit(e.formData);
-                setOpen(false);
+                props.onClose?.();
+                if (!isControlled) setUncontrolledOpen(false);
               }}
             >
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+                <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>
                   Annulla
                 </Button>
                 <Button type="submit">Salva</Button>

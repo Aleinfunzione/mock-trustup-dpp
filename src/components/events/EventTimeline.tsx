@@ -1,5 +1,4 @@
 import * as React from "react";
-import { useEffect, useState, useCallback } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,35 +20,41 @@ export default function EventTimeline({
   const { toast } = useToast();
   const { listByProduct, verifyEventIntegrity } = useEvents();
 
-  const [rows, setRows] = useState<UIEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [verifying, setVerifying] = useState<Record<string, boolean>>({});
-  const [integrity, setIntegrity] = useState<Record<string, boolean | null>>({});
+  const [rows, setRows] = React.useState<UIEvent[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [verifying, setVerifying] = React.useState<Record<string, boolean>>({});
+  const [integrity, setIntegrity] = React.useState<Record<string, boolean | null>>({});
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await listByProduct(productId);
-      // Ordine cronologico crescente (dal più vecchio al più recente)
-      data.sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      );
-      setRows(data);
-      setIntegrity({});
-    } catch (err: any) {
-      toast({
-        title: "Errore nel caricamento timeline",
-        description: err?.message ?? "Impossibile leggere gli eventi.",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [productId, listByProduct, toast]);
+  // ⚠️ Effetto dipende SOLO da productId (le funzioni del hook non sono incluse)
+  React.useEffect(() => {
+    let mounted = true;
 
-  useEffect(() => {
-    load();
-  }, [load]);
+    (async () => {
+      try {
+        setLoading(true);
+        const data = await listByProduct(productId);
+        if (!mounted) return;
+        data.sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        setRows(data);
+        setIntegrity({});
+      } catch (err: any) {
+        if (!mounted) return;
+        toast({
+          title: "Errore nel caricamento timeline",
+          description: err?.message ?? "Impossibile leggere gli eventi.",
+          variant: "destructive",
+        });
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [productId]); // ← niente listByProduct/toast qui
 
   const handleVerify = async (id: string) => {
     try {
@@ -66,11 +71,11 @@ export default function EventTimeline({
   };
 
   return (
-    <Card className="w-full">
+    <Card className="w-full relative z-0">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="relative z-0 overflow-hidden">
         {loading ? (
           <div className="text-sm text-muted-foreground">Caricamento…</div>
         ) : rows.length === 0 ? (
@@ -90,55 +95,51 @@ export default function EventTimeline({
               const intg = integrity[e.id];
               const verifyingRow = verifying[e.id];
 
-              // --- Nuovo: ambito e target BOM (se presenti in e.data) ---
               const scope = (e as any).data?.scope as "product" | "bom" | undefined;
               const targetLabel = (e as any).data?.targetLabel as string | undefined;
 
               return (
-                <li key={e.id} className="mb-6 ms-6">
-                  {/* puntatore timeline */}
-                  <span className="absolute -start-3 flex h-6 w-6 items-center justify-center rounded-full bg-neutral-200 dark:bg-neutral-700 ring-8 ring-white dark:ring-neutral-900" />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs text-muted-foreground">#{e.id}</span>
+                <li key={e.id} className="mb-10 ms-6">
+                  <span className="absolute -start-3 flex h-6 w-6 items-center justify-center rounded-full bg-muted ring-8 ring-background">
+                    <span className={`h-2.5 w-2.5 rounded-full ${statusColor}`} />
+                  </span>
+
+                  <div className="flex items-center gap-2">
+                    <time className="text-xs text-muted-foreground">
+                      {new Date(e.createdAt).toLocaleString()}
+                    </time>
+                    <Badge variant="secondary">{e.type}</Badge>
                     <Badge className={statusColor + " text-white"}>{e.status}</Badge>
                     {scope && (
-                      <Badge variant="secondary">
-                        {scope === "bom" ? `BOM` : `Prodotto`}
+                      <Badge variant="outline">
+                        {scope === "product" ? "Prodotto" : "BOM"}
+                        {targetLabel ? ` • ${targetLabel}` : ""}
                       </Badge>
                     )}
-                    {scope === "bom" && targetLabel && (
-                      <Badge variant="outline">{targetLabel}</Badge>
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(e.createdAt).toLocaleString()}
-                    </span>
                   </div>
 
-                  <div className="mt-1">
-                    <span className="font-medium">{e.type}</span>{" "}
-                    <span className="text-xs text-muted-foreground">
-                      by {e.byDid} {e.assignedToDid && `→ ${e.assignedToDid}`}
-                    </span>
-                  </div>
+                  {e.notes && <p className="mt-2 text-sm">{e.notes}</p>}
 
-                  {e.notes && <div className="text-sm">{e.notes}</div>}
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    by {e.byDid} {e.assignedToDid && `→ ${e.assignedToDid}`}
+                  </div>
 
                   {showVerify && (
                     <div className="mt-2">
-                      {intg === undefined ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={!!verifyingRow}
-                          onClick={() => handleVerify(e.id)}
-                        >
-                          {verifyingRow ? "Verifica…" : "Verifica integrità"}
-                        </Button>
-                      ) : intg ? (
-                        <Badge variant="default">✅ Firma/Hash OK</Badge>
-                      ) : (
-                        <Badge variant="destructive">❌ Non valida</Badge>
-                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleVerify(e.id)}
+                        disabled={!!verifyingRow}
+                      >
+                        {verifyingRow
+                          ? "Verifico…"
+                          : intg === true
+                          ? "Integrità: OK"
+                          : intg === false
+                          ? "Integrità: KO"
+                          : "Verifica integrità"}
+                      </Button>
                     </div>
                   )}
                 </li>
