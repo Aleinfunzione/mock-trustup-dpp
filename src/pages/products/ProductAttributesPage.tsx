@@ -1,3 +1,4 @@
+// src/pages/products/ProductAttributesPage.tsx
 import * as React from "react";
 import { useParams, Link, useLocation } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -5,17 +6,16 @@ import { Button } from "@/components/ui/button";
 import AttributesAndCredentialsTab from "@/components/products/AttributesAndCredentialsTab";
 import { getProductById } from "@/services/api/products";
 
-// Alias tipizzato locale: così TS sa che il componente accetta { productId: string }
+// Alias tipizzato locale
 const AttrTab = AttributesAndCredentialsTab as unknown as React.ComponentType<{
   productId: string;
 }>;
 
 export default function ProductAttributesPage() {
-  // coerente con ProductDetailPage: parametro :id
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
 
-  // deduce il ramo corrente per costruire i link (Company vs Creator)
+  // Company vs Creator
   const isCompany = location.pathname.startsWith("/company/");
   const baseListPath = isCompany ? "/company/products" : "/creator/products";
   const baseDetailPath = baseListPath;
@@ -31,6 +31,7 @@ export default function ProductAttributesPage() {
       setName((p as any).name ?? id);
     } else {
       setExists(false);
+      setName("");
     }
   }, [id]);
 
@@ -41,9 +42,9 @@ export default function ProductAttributesPage() {
           <CardTitle>Prodotto non trovato</CardTitle>
         </CardHeader>
         <CardContent>
-          <Link to={baseListPath}>
-            <Button>Indietro</Button>
-          </Link>
+          <Button asChild variant="outline">
+            <Link to={baseListPath}>Indietro</Link>
+          </Button>
         </CardContent>
       </Card>
     );
@@ -59,9 +60,9 @@ export default function ProductAttributesPage() {
           <p className="text-sm text-muted-foreground">
             Nessun prodotto con ID <code>{id}</code> nello storage locale.
           </p>
-          <Link to={baseListPath}>
-            <Button>Indietro</Button>
-          </Link>
+          <Button asChild variant="outline">
+            <Link to={baseListPath}>Indietro</Link>
+          </Button>
         </CardContent>
       </Card>
     );
@@ -73,13 +74,13 @@ export default function ProductAttributesPage() {
         <h1 className="text-xl font-semibold">
           Caratteristiche &amp; Credenziali — {name}
         </h1>
-        <Link to={`${baseDetailPath}/${id!}`}>
-          <Button variant="outline">Dettagli prodotto</Button>
-        </Link>
+        <Button asChild variant="outline">
+          <Link to={`${baseDetailPath}/${id}`}>Dettagli prodotto</Link>
+        </Button>
       </div>
 
       {/* Tab: Catalogo → Pillole → Aggregato */}
-      <AttrTab productId={id!} />
+      <AttrTab productId={id} />
     </div>
   );
 }
