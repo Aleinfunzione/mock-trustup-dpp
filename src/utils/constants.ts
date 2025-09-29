@@ -15,6 +15,10 @@ export const STORAGE_KEYS = {
 
   // Eventi (MOCK)
   events: "trustup.events",
+
+  // VC (nuove)
+  orgVC: "trustup:vc:org",
+  prodVC: "trustup:vc:prod",
 } as const;
 
 /**
@@ -25,7 +29,11 @@ export const ROUTES = {
   admin: "/admin",
   company: "/company", // Home azienda
   companyTeam: "/company/team", // Gestione membri
+  companyCompliance: "/company/compliance", // NEW
+
   creator: "/creator",
+  creatorProductCredentials: "/creator/products/:id/credentials", // NEW
+
   operator: "/operator",
   machine: "/machine",
 } as const;
@@ -72,10 +80,6 @@ export const PRODUCT_TYPES_BY_CATEGORY: Readonly<Record<string, string[]>> = {
 
 /**
  * Tipi di evento supportati (derivati dal tuo union type in src/types/event.ts).
- * Usiamo una tuple literal per ottenere `EventTypeFromConst` come union type
- * senza importare direttamente dai tipi (evita dipendenze circolari).
- *
- * Nota: se modifichi il union type in src/types/event.ts, aggiorna anche qui.
  */
 export const EVENT_TYPES = [
   "product.created",
@@ -108,7 +112,6 @@ export type EventStatus = (typeof EVENT_STATUSES)[number];
 
 /**
  * Mappa di utilità per gestire la redirezione post-login e la sidebar.
- * Non obbligatoria: usala dove ti torna utile.
  */
 export const ROLE_ROUTES: Record<
   "admin" | "company" | "creator" | "operator" | "machine",

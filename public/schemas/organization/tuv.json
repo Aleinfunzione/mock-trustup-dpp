@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft/2020-12/schema",
+  "$id": "tuv.json",
+  "title": "TÜV CredentialSubject",
+  "type": "object",
+  "properties": {
+    "certificationNumber": { "type": "string", "minLength": 3 },
+    "testStandard": { "type": "string", "minLength": 2 },
+    "validUntil": { "type": "string", "format": "date" },
+    "reportLink": { "type": "string", "format": "uri" }
+  },
+  "required": ["certificationNumber", "testStandard", "validUntil"],
+  "additionalProperties": false
+}

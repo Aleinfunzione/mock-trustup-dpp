@@ -17,6 +17,7 @@ import MachineDashboard from "@/pages/dashboards/MachineDashboard";
 import CompanyEventsPage from "@/pages/events/CompanyEventsPage";
 import CompanyAttributesPage from "@/pages/company/CompanyAttributesPage";
 import CompanyIslandsPage from "@/pages/company/CompanyIslandsPage";
+import CompanyCompliancePage from "@/pages/company/CompanyCompliancePage"; // NEW
 
 // Creator
 import CreatorEventsPage from "@/pages/events/CreatorEventsPage";
@@ -86,6 +87,15 @@ export default function AppRouter() {
             element={
               <RequireRole role="company">
                 <CompanyIslandsPage />
+              </RequireRole>
+            }
+          />
+          {/* NEW: Compliance overview */}
+          <Route
+            path="/company/compliance"
+            element={
+              <RequireRole role="company">
+                <CompanyCompliancePage />
               </RequireRole>
             }
           />
@@ -159,6 +169,16 @@ export default function AppRouter() {
             path="/creator/products/:id/attributes"
             element={
               <RequireRole role="creator">
+                <ProductAttributesPage />
+              </RequireRole>
+            }
+          />
+          {/* NEW: Tab Credentials (placeholder finché non creiamo la pagina dedicata) */}
+          <Route
+            path="/creator/products/:id/credentials"
+            element={
+              <RequireRole role="creator">
+                {/* TODO: sostituire con <ProductCredentialsPage /> */}
                 <ProductAttributesPage />
               </RequireRole>
             }

@@ -27,8 +27,7 @@ export default function ProductDetailPage() {
 
   // basePath per “torna alla lista” + link azioni
   const role = currentUser?.role;
-  const roleBase =
-    role === "company" ? "/company" : role === "creator" ? "/creator" : "";
+  const roleBase = role === "company" ? "/company" : role === "creator" ? "/creator" : "";
   const basePath =
     role === "company" ? "/company/products" :
     role === "creator" ? "/creator/products" :
@@ -152,6 +151,7 @@ export default function ProductDetailPage() {
       "—") as string;
 
   const attributesHref = roleBase ? `${roleBase}/products/${id}/attributes` : undefined;
+  const credentialsHref = roleBase ? `${roleBase}/products/${id}/credentials` : undefined; // NEW
   const dppHref = roleBase ? `${roleBase}/products/${id}/dpp` : undefined;
 
   const isPublished = !!prodAny.isPublished;
@@ -189,11 +189,16 @@ export default function ProductDetailPage() {
             Azienda: {prodAny.companyDid ?? currentUser?.companyDid ?? "—"}
           </div>
 
-          {/* Azioni rapide su attributi e DPP */}
+          {/* Azioni rapide su caratteristiche, credenziali e DPP */}
           <div className="mt-2 flex flex-wrap gap-2">
             {attributesHref && (
               <Button asChild variant="outline" size="sm">
                 <Link to={attributesHref}>Caratteristiche</Link>
+              </Button>
+            )}
+            {credentialsHref && ( // NEW
+              <Button asChild variant="outline" size="sm">
+                <Link to={credentialsHref}>Credenziali</Link>
               </Button>
             )}
             {dppHref && (

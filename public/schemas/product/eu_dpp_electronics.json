@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft/2020-12/schema",
+  "$id": "eu_dpp_electronics.json",
+  "title": "EU DPP Electronics",
+  "type": "object",
+  "properties": {
+    "energyLabel": { "type": "string", "pattern": "^[A-G][+-]?$" },
+    "hazardousSubstances": { "type": "array", "items": { "type": "string" } },
+    "repairabilityScore": { "type": "number", "minimum": 0, "maximum": 10 },
+    "warrantyMonths": { "type": "integer", "minimum": 0 }
+  },
+  "required": ["energyLabel", "hazardousSubstances", "repairabilityScore"],
+  "additionalProperties": false
+}

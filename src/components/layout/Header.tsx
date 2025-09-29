@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ModeToggle } from "@/components/mode-toggle";
 import { useAuth } from "@/hooks/useAuth";
@@ -12,6 +12,7 @@ function shortId(id?: string) {
 export default function Header() {
   const { logout, currentUser } = useAuth();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
 
   const role = currentUser?.role as "creator" | "company" | "admin" | "operator" | "machine" | undefined;
   const base = role ? `/${role}` : "/";
@@ -25,15 +26,21 @@ export default function Header() {
       const pid = parts[2];
       crumbs.push({ label: shortId(pid), to: `${base}/products/${pid}` });
       if (parts[3] === "attributes") crumbs.push({ label: "Caratteristiche" });
+      if (parts[3] === "credentials") crumbs.push({ label: "Credenziali" }); // NEW
       if (parts[3] === "dpp") crumbs.push({ label: "DPP" });
     }
   } else if (parts.length >= 2 && parts[1] === "events") {
     crumbs.push({ label: "Eventi", to: `${base}/events` });
   } else if (parts.length >= 2 && parts[1] === "attributes") {
     crumbs.push({ label: "Attributi azienda", to: `${base}/attributes` });
+  } else if (parts.length >= 2 && parts[1] === "compliance") {
+    crumbs.push({ label: "Compliance", to: `${base}/compliance` });
   }
 
   const showCrumbs = crumbs.length > 1;
+
+  const userDid = currentUser?.did;
+  const companyDid = currentUser?.companyDid;
 
   return (
     <header
@@ -67,6 +74,30 @@ export default function Header() {
       </div>
 
       <div className="flex items-center gap-2">
+        {/* DID utente e azienda */}
+        {companyDid && (
+          <span className="hidden sm:inline text-xs font-mono text-muted-foreground" title={`companyDid: ${companyDid}`}>
+            org:{shortId(companyDid)}
+          </span>
+        )}
+        {userDid && (
+          <span className="hidden sm:inline text-xs font-mono text-muted-foreground" title={`did: ${userDid}`}>
+            did:{shortId(userDid)}
+          </span>
+        )}
+
+        {/* Link rapido Compliance per ruolo company */}
+        {role === "company" && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(`${base}/compliance`)}
+            title="Vai alla pagina Compliance"
+          >
+            Compliance
+          </Button>
+        )}
+
         <ModeToggle />
         <Button variant="outline" onClick={logout}>
           Logout

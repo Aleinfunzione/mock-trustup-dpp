@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft/2020-12/schema",
+  "$id": "gs1.json",
+  "title": "GS1 Product Attributes",
+  "type": "object",
+  "properties": {
+    "gtin": { "type": "string", "pattern": "^[0-9]{8,14}$" },
+    "productName": { "type": "string", "minLength": 1 },
+    "brandName": { "type": "string", "minLength": 1 },
+    "manufacturerName": { "type": "string", "minLength": 1 },
+    "netContent": { "type": "string" },
+    "countryOfOrigin": { "type": "string", "minLength": 2 }
+  },
+  "required": ["gtin", "productName", "brandName", "manufacturerName"],
+  "additionalProperties": false
+}

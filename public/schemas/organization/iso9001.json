@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft/2020-12/schema",
+  "$id": "iso9001.json",
+  "title": "ISO 9001 CredentialSubject",
+  "type": "object",
+  "properties": {
+    "certificationNumber": { "type": "string", "minLength": 3 },
+    "issuingBody": { "type": "string", "minLength": 2 },
+    "validFrom": { "type": "string", "format": "date" },
+    "validUntil": { "type": "string", "format": "date" },
+    "scopeStatement": { "type": "string" },
+    "evidenceLink": { "type": "string", "format": "uri" }
+  },
+  "required": ["certificationNumber", "issuingBody", "validFrom", "validUntil"],
+  "additionalProperties": false
+}

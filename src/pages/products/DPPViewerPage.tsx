@@ -3,75 +3,92 @@ import * as React from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { aggregateDPP, getPublishedDPP, publishDPP } from "@/services/dpp/aggregate";
+
+import { WorkflowOrchestrator } from "@/services/orchestration/WorkflowOrchestrator";
+import type { VerifiablePresentation } from "@/domains/credential/entities";
+import type { ComplianceReport } from "@/domains/compliance/services";
+import { useCredentialStore } from "@/stores/credentialStore";
 import { getProductById } from "@/services/api/products";
 
 type Snapshot = {
   id: string;
   publishedAt: string;
-  digest: string;
-  content: any;
+  content: VerifiablePresentation;
 } | null;
 
 export default function DPPViewerPage() {
   const { id: productId, dppId: routeDppId } = useParams<{ id?: string; dppId?: string }>();
   const navigate = useNavigate();
 
-  const [draft, setDraft] = React.useState<{ digest: string; content: any } | null>(null);
+  const [vpPreview, setVpPreview] = React.useState<VerifiablePresentation | null>(null);
+  const [includedCount, setIncludedCount] = React.useState<number>(0);
+  const [report, setReport] = React.useState<ComplianceReport | null>(null);
+
   const [snapshot, setSnapshot] = React.useState<Snapshot>(null);
   const [loading, setLoading] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
 
-  const load = React.useCallback(async () => {
-    if (!productId && !routeDppId) return;
-    setLoading(true);
-    setErr(null);
-    try {
-      // Se è passato un dppId esplicito, mostra direttamente lo snapshot
-      if (routeDppId) {
-        const snap = getPublishedDPP(routeDppId);
-        setSnapshot(snap);
-        setDraft(null);
-        return;
-      }
+  const { org, prod, load } = useCredentialStore();
 
-      // Altrimenti carica prodotto e stato corrente
-      const p = getProductById(productId!);
-      // Bozza sempre ricalcolata per sicurezza
-      const aggr = await aggregateDPP(productId!);
-      setDraft({ digest: aggr.digest, content: aggr.draft });
-
-      // Snapshot se pubblicato
-      const dppId = (p as any)?.dppId as string | undefined;
-      if (dppId) {
-        const snap = getPublishedDPP(dppId);
-        setSnapshot(snap);
-      } else {
-        setSnapshot(null);
+  const loadAll = React.useCallback(async () => {
+    if (routeDppId) {
+      setLoading(true);
+      setErr(null);
+      try {
+        const snap = WorkflowOrchestrator.getSnapshot(routeDppId);
+        if (!snap) throw new Error("Snapshot non trovato");
+        setSnapshot({
+          id: routeDppId,
+          publishedAt: new Date().toISOString(), // mock timestamp
+          content: snap,
+        });
+        setVpPreview(null);
+        setReport(null);
+      } catch (e: any) {
+        setErr(e?.message || "Errore nel caricamento snapshot VP");
+      } finally {
+        setLoading(false);
       }
-    } catch (e: any) {
-      setErr(e?.message || "Errore nel caricamento DPP");
-    } finally {
-      setLoading(false);
+      return;
     }
-  }, [productId, routeDppId]);
 
-  React.useEffect(() => {
-    load();
-  }, [load]);
-
-  async function onReaggregate() {
     if (!productId) return;
     setLoading(true);
     setErr(null);
     try {
-      const aggr = await aggregateDPP(productId);
-      setDraft({ digest: aggr.digest, content: aggr.draft });
+      // assicura presenza in memoria
+      load?.();
+
+      // coerenza con UX legacy
+      getProductById(productId);
+
+      const orgVC = org || {};
+      const prodVC = (prod && prod[productId]) || {};
+
+      const res = await WorkflowOrchestrator.prepareVP(orgVC, prodVC);
+      if (res.ok) {
+        setVpPreview(res.vp);
+        setIncludedCount(res.included);
+        setReport(res.report);
+      } else {
+        setVpPreview(null);
+        setIncludedCount(0);
+        setReport(res.report);
+      }
+      setSnapshot(null);
     } catch (e: any) {
-      setErr(e?.message || "Errore ricalcolo bozza");
+      setErr(e?.message || "Errore nel calcolo della VP");
     } finally {
       setLoading(false);
     }
+  }, [routeDppId, productId, org, prod, load]);
+
+  React.useEffect(() => {
+    loadAll();
+  }, [loadAll]);
+
+  async function onReprepare() {
+    await loadAll();
   }
 
   async function onPublish() {
@@ -79,27 +96,68 @@ export default function DPPViewerPage() {
     setLoading(true);
     setErr(null);
     try {
-      const { dppId, digest } = await publishDPP(productId);
-      const snap = getPublishedDPP(dppId);
-      setSnapshot(snap);
-      // opzionale: naviga per avere URL stabile allo snapshot
+      // prepara se assente
+      let vp = vpPreview;
+      if (!vp) {
+        const orgVC = org || {};
+        const prodVC = (prod && prod[productId]) || {};
+        const res = await WorkflowOrchestrator.prepareVP(orgVC, prodVC);
+        if (!res.ok) throw new Error("Compliance incompleta: completa le credenziali richieste");
+        vp = res.vp;
+      }
+
+      const result = await WorkflowOrchestrator.publishVP(vp);
+      if (!result.ok) {
+        const msg = (result as any).message ?? "Publish VP fallito";
+        throw new Error(msg);
+      }
+
+      setSnapshot({
+        id: result.snapshotId,
+        publishedAt: new Date().toISOString(),
+        content: result.vp,
+      });
+
+      // URL stabile legacy
       navigate(`/company/products/${productId}/dpp`, { replace: true });
     } catch (e: any) {
-      setErr(e?.message || "Errore pubblicazione");
+      setErr(e?.message || "Errore pubblicazione VP");
     } finally {
       setLoading(false);
     }
+  }
+
+  function renderReport() {
+    if (!report) return null;
+    return (
+      <div className="space-y-2">
+        <div className="text-sm font-medium">Compliance</div>
+        <div className="text-sm">Stato: {report.ok ? "✅ Completa" : "❌ Incompleta"}</div>
+        {!report.ok && (
+          <div className="text-xs">
+            <div className="font-medium mb-1">Mancanze:</div>
+            <ul className="list-disc pl-5 space-y-1">
+              {report.missing.map((m, i) => (
+                <li key={i}>
+                  <span className="font-mono">{m.scope}:{m.standard}</span> — {m.reason}
+                  {m.fields?.length ? ` (campi: ${m.fields.join(", ")})` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">DPP Viewer</CardTitle>
+          <CardTitle className="text-base">DPP Viewer → VP & Compliance</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {err && <div className="text-sm text-destructive">{err}</div>}
-
           {loading && <div className="text-sm text-muted-foreground">Caricamento…</div>}
 
           {/* Snapshot pubblicato */}
@@ -111,9 +169,6 @@ export default function DPPViewerPage() {
                   <b>ID:</b> <span className="font-mono">{snapshot.id}</span>
                 </div>
                 <div>
-                  <b>Digest:</b> <span className="font-mono">{snapshot.digest}</span>
-                </div>
-                <div>
                   <b>Published:</b> {new Date(snapshot.publishedAt).toLocaleString()}
                 </div>
               </div>
@@ -123,21 +178,25 @@ export default function DPPViewerPage() {
             </div>
           )}
 
-          {/* Bozza corrente */}
-          {draft && (
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Bozza corrente</div>
-              <div className="text-sm">
-                <b>Digest:</b> <span className="font-mono">{draft.digest}</span>
-              </div>
-              <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
-{JSON.stringify(draft.content, null, 2)}
-              </pre>
+          {/* VP preparata + compliance */}
+          {!snapshot && (vpPreview || report) && (
+            <div className="space-y-3">
+              {renderReport()}
+              {vpPreview && (
+                <>
+                  <div className="text-sm">
+                    <b>VP pronta</b> — credenziali incluse: <span className="font-mono">{includedCount}</span>
+                  </div>
+                  <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
+{JSON.stringify(vpPreview, null, 2)}
+                  </pre>
+                </>
+              )}
             </div>
           )}
 
-          {!snapshot && !draft && !loading && (
-            <div className="text-sm text-muted-foreground">Nessun dato DPP disponibile.</div>
+          {!snapshot && !vpPreview && !report && !loading && (
+            <div className="text-sm text-muted-foreground">Nessun dato disponibile.</div>
           )}
 
           <div className="flex gap-2 pt-1">
@@ -146,11 +205,11 @@ export default function DPPViewerPage() {
             </Button>
             {productId && (
               <>
-                <Button variant="secondary" onClick={onReaggregate} disabled={loading}>
-                  Ricalcola bozza
+                <Button variant="secondary" onClick={onReprepare} disabled={loading}>
+                  Ricalcola VP
                 </Button>
-                <Button onClick={onPublish} disabled={loading}>
-                  Pubblica DPP
+                <Button onClick={onPublish} disabled={loading || (report && !report.ok)}>
+                  Pubblica VP
                 </Button>
               </>
             )}
