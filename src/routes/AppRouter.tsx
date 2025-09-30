@@ -17,7 +17,7 @@ import MachineDashboard from "@/pages/dashboards/MachineDashboard";
 import CompanyEventsPage from "@/pages/events/CompanyEventsPage";
 import CompanyAttributesPage from "@/pages/company/CompanyAttributesPage";
 import CompanyIslandsPage from "@/pages/company/CompanyIslandsPage";
-import CompanyCompliancePage from "@/pages/company/CompanyCompliancePage"; // NEW
+import CompanyCompliancePage from "@/pages/company/CompanyCompliancePage";
 
 // Creator
 import CreatorEventsPage from "@/pages/events/CreatorEventsPage";
@@ -28,6 +28,7 @@ import CreatorAttributesCatalogPage from "@/pages/creator/CreatorAttributesCatal
 import ProductsPage from "@/pages/products/ProductsPage";
 import ProductDetailPage from "@/pages/products/ProductDetailPage";
 import ProductAttributesPage from "@/pages/products/ProductAttributesPage";
+import ProductCredentialsPage from "@/pages/products/ProductCredentialsPage"; // NEW
 import DPPViewerPage from "@/pages/products/DPPViewerPage";
 
 export default function AppRouter() {
@@ -90,7 +91,6 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* NEW: Compliance overview */}
           <Route
             path="/company/compliance"
             element={
@@ -173,13 +173,12 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* NEW: Tab Credentials (placeholder finché non creiamo la pagina dedicata) */}
+          {/* NEW: pagina Credenziali VC */}
           <Route
             path="/creator/products/:id/credentials"
             element={
               <RequireRole role="creator">
-                {/* TODO: sostituire con <ProductCredentialsPage /> */}
-                <ProductAttributesPage />
+                <ProductCredentialsPage />
               </RequireRole>
             }
           />

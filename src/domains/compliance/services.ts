@@ -20,13 +20,18 @@ export type ComplianceItem = {
 };
 
 export type ComplianceReport = {
-  ok: boolean;                // tutti gli standard richiesti presenti+validi
+  ok: boolean;                // tutti gli standard valutati presenti+validi
   items: ComplianceItem[];
   missing: { scope: Scope; standard: StandardId; reason: "absent" | "schema" | "proof"; fields?: string[] }[];
   details: Record<string, boolean>; // chiavi "org:ISO9001", "prod:GS1"
 };
 
-type VcMap = Partial<Record<StandardId, VerifiableCredential<any> | undefined>>;
+export type ComplianceOptions = {
+  productRequired?: StandardId[];       // se presente, valuta solo questi per scope=product
+  organizationRequired?: StandardId[];  // se presente, valuta solo questi per scope=organization
+};
+
+export type VcMap = Partial<Record<StandardId, VerifiableCredential<any> | undefined>>;
 
 function scopedKey(scope: Scope, std: StandardId) {
   return `${scope === "organization" ? "org" : "prod"}:${std}`;
@@ -46,25 +51,31 @@ function requiredFieldsMissing(standard: StandardId, subject: any): string[] {
 }
 
 /**
- * Valuta tutti gli standard noti del registry:
- * - Per scope=organization, guarda in orgVC.
- * - Per scope=product, guarda in prodVC.
- * Un sistema reale potrebbe filtrare “standard richiesti” per tipo prodotto; qui valutiamo tutti.
+ * Valuta gli standard del registry.
+ * Se opts.*Required è valorizzato, limita la valutazione a quegli standard per scope.
  */
-export async function evaluateCompliance(orgVC: VcMap, prodVC: VcMap): Promise<ComplianceReport> {
+export async function evaluateCompliance(
+  orgVC: VcMap,
+  prodVC: VcMap,
+  opts?: ComplianceOptions
+): Promise<ComplianceReport> {
   const items: ComplianceItem[] = [];
 
   for (const [std, meta] of Object.entries(StandardsRegistry)) {
     const standard = std as StandardId;
+
     if (meta.scope === "organization") {
+      if (opts?.organizationRequired && !opts.organizationRequired.includes(standard)) continue;
       items.push(await evalOne("organization", standard, orgVC[standard]));
     } else {
+      if (opts?.productRequired && !opts.productRequired.includes(standard)) continue;
       items.push(await evalOne("product", standard, prodVC[standard]));
     }
   }
 
   const missing: ComplianceReport["missing"] = [];
   const details: ComplianceReport["details"] = {};
+
   for (const it of items) {
     const key = scopedKey(it.scope, it.standard);
     const ok = it.present && it.validSchema !== false && it.validProof !== false && (!it.missingFields || it.missingFields.length === 0);
