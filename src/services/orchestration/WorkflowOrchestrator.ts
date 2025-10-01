@@ -1,11 +1,15 @@
 // src/services/orchestration/WorkflowOrchestrator.ts
-// Orchestrazione compliance→VP→publish (mock snapshot).
-// Non tocca UI legacy: forniamo anche un adapter per “publish DPP”.
+// Orchestrazione compliance → VP → publish con persistenza snapshot.
 
 import type { VerifiablePresentation, VerifiableCredential } from "@/domains/credential/entities";
 import { composeVP, signVPAsync, verifyVC, verifyVP } from "@/domains/credential/services";
-import { evaluateCompliance, type ComplianceReport } from "@/domains/compliance/services";
+import {
+  evaluateCompliance,
+  type ComplianceReport,
+  type ComplianceOptions,
+} from "@/domains/compliance/services";
 import type { StandardId } from "@/config/standardsRegistry";
+import { SnapshotStorage } from "@/services/storage/SnapshotStorage";
 
 // Tipi di input: map VC org e prodotto come da credentialStore
 export type OrgVCMap = Partial<Record<StandardId, VerifiableCredential<any>>>;
@@ -18,9 +22,6 @@ export type PrepareVPResult =
 export type PublishResult =
   | { ok: true; snapshotId: string; vp: VerifiablePresentation }
   | { ok: false; message: string };
-
-// Mock snapshot registry in-memory (puoi sostituire con storage reale)
-const snapshots = new Map<string, VerifiablePresentation>();
 
 function collectCreds(org: OrgVCMap, prod: ProdVCMap): VerifiableCredential[] {
   const res: VerifiableCredential[] = [];
@@ -36,8 +37,12 @@ async function verifyAllVC(creds: VerifiableCredential[]) {
 
 export const WorkflowOrchestrator = {
   /** Gate di compliance. Se ok, crea VP non firmata con tutte le VC valide. */
-  async prepareVP(orgVC: OrgVCMap, prodVC: ProdVCMap): Promise<PrepareVPResult> {
-    const report = await evaluateCompliance(orgVC, prodVC);
+  async prepareVP(
+    orgVC: OrgVCMap,
+    prodVC: ProdVCMap,
+    opts?: ComplianceOptions
+  ): Promise<PrepareVPResult> {
+    const report = await evaluateCompliance(orgVC, prodVC, opts);
     if (!report.ok) {
       return { ok: false, report, message: "Compliance incompleta: mancano credenziali o campi richiesti" };
     }
@@ -50,19 +55,19 @@ export const WorkflowOrchestrator = {
     return { ok: true, vp, included: creds.length, report };
   },
 
-  /** Firma la VP e registra uno snapshot immutabile mock. */
+  /** Firma la VP e registra snapshot persistente su localStorage. */
   async publishVP(vp: VerifiablePresentation): Promise<PublishResult> {
     const signed = await signVPAsync(vp);
     const ok = (await verifyVP(signed)).valid;
     if (!ok) return { ok: false, message: "Impossibile verificare la VP firmata" };
 
-    const id = `mock.vp.snapshot.${Date.now()}`;
-    snapshots.set(id, signed);
+    const { id } = SnapshotStorage.save(signed);
     return { ok: true, snapshotId: id, vp: signed };
   },
 
-  /** Recupera uno snapshot pubblicato. */
+  /** Recupera VP dallo snapshot pubblicato. */
   getSnapshot(id: string): VerifiablePresentation | undefined {
-    return snapshots.get(id);
+    const rec = SnapshotStorage.get<VerifiablePresentation>(id);
+    return rec?.vp;
   },
 };
