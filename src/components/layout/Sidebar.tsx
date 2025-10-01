@@ -1,3 +1,4 @@
+// src/components/layout/Sidebar.tsx
 import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -8,14 +9,16 @@ const NAV: Record<string, NavItem[]> = {
     { to: "/company", label: "Dashboard" },
     { to: "/company/products", label: "Prodotti" },
     { to: "/company/events", label: "Eventi" },
-    { to: "/company/islands", label: "Isole" },            // NEW
-    { to: "/company/attributes", label: "Attributi azienda" }
+    { to: "/company/islands", label: "Isole" },
+    { to: "/company/attributes", label: "Attributi azienda" },
+    { to: "/company/compliance", label: "Compliance" },        // NEW
+    { to: "/company/credentials", label: "Credenziali org" },  // NEW
   ],
   creator: [
     { to: "/creator", label: "Dashboard" },
     { to: "/creator/products", label: "Prodotti" },
     { to: "/creator/events", label: "Eventi" },
-    { to: "/creator/attributes", label: "Catalogo attributi" } // NEW
+    { to: "/creator/attributes", label: "Catalogo attributi" },
   ],
   operator: [{ to: "/operator", label: "Dashboard" }],
   machine: [{ to: "/machine", label: "Dashboard" }],

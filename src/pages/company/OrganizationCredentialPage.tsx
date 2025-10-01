@@ -13,7 +13,6 @@ import { useAuthStore } from "@/stores/authStore";
 import type { VerifiableCredential } from "@/domains/credential/entities";
 import { verifyVC } from "@/domains/credential/services";
 
-// RJSF v5 + validator AJV8
 import Form from "@rjsf/core";
 import type { IChangeEvent } from "@rjsf/core";
 import validatorAjv8 from "@rjsf/validator-ajv8";
@@ -93,11 +92,11 @@ export default function OrganizationCredentialPage() {
     try {
       if (!issuerDid) throw new Error("Issuer DID non disponibile");
 
-      // VC mock minimale; il signer reale del dominio può sostituire questa parte.
+      // VC mock minimale conforme al type locale (issuer: string)
       const vc: VerifiableCredential<any> = {
         "@context": ["https://www.w3.org/2018/credentials/v1"],
         type: ["VerifiableCredential", `Org${standard}`],
-        issuer: { id: issuerDid },
+        issuer: issuerDid, // <— FIX tipizzato string
         issuanceDate: new Date().toISOString(),
         credentialSubject: e.formData,
         proof: { type: "Ed25519Signature2020", created: new Date().toISOString() } as any,

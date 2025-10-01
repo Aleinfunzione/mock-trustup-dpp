@@ -1,8 +1,10 @@
+// src/components/layout/Header.tsx
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ModeToggle } from "@/components/mode-toggle";
 import { useAuth } from "@/hooks/useAuth";
 import BackButton from "./BackButton";
+import ComplianceIndicator from "@/components/ComplianceIndicator";
 
 function shortId(id?: string) {
   if (!id) return "";
@@ -26,7 +28,7 @@ export default function Header() {
       const pid = parts[2];
       crumbs.push({ label: shortId(pid), to: `${base}/products/${pid}` });
       if (parts[3] === "attributes") crumbs.push({ label: "Caratteristiche" });
-      if (parts[3] === "credentials") crumbs.push({ label: "Credenziali" }); // NEW
+      if (parts[3] === "credentials") crumbs.push({ label: "Credenziali" });
       if (parts[3] === "dpp") crumbs.push({ label: "DPP" });
     }
   } else if (parts.length >= 2 && parts[1] === "events") {
@@ -35,6 +37,8 @@ export default function Header() {
     crumbs.push({ label: "Attributi azienda", to: `${base}/attributes` });
   } else if (parts.length >= 2 && parts[1] === "compliance") {
     crumbs.push({ label: "Compliance", to: `${base}/compliance` });
+  } else if (parts.length >= 2 && parts[1] === "credentials") {
+    crumbs.push({ label: "Credenziali org", to: `${base}/credentials` });
   }
 
   const showCrumbs = crumbs.length > 1;
@@ -86,16 +90,19 @@ export default function Header() {
           </span>
         )}
 
-        {/* Link rapido Compliance per ruolo company */}
+        {/* Indicatore compliance + quick links role=company */}
         {role === "company" && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigate(`${base}/compliance`)}
-            title="Vai alla pagina Compliance"
-          >
-            Compliance
-          </Button>
+          <div className="flex items-center gap-2">
+            <ComplianceIndicator />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`${base}/credentials`)}
+              title="Gestisci credenziali organizzazione"
+            >
+              Credenziali
+            </Button>
+          </div>
         )}
 
         <ModeToggle />

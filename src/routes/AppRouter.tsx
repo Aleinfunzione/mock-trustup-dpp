@@ -18,6 +18,7 @@ import CompanyEventsPage from "@/pages/events/CompanyEventsPage";
 import CompanyAttributesPage from "@/pages/company/CompanyAttributesPage";
 import CompanyIslandsPage from "@/pages/company/CompanyIslandsPage";
 import CompanyCompliancePage from "@/pages/company/CompanyCompliancePage";
+import OrganizationCredentialPage from "@/pages/company/OrganizationCredentialPage"; // NEW
 
 // Creator
 import CreatorEventsPage from "@/pages/events/CreatorEventsPage";
@@ -28,8 +29,11 @@ import CreatorAttributesCatalogPage from "@/pages/creator/CreatorAttributesCatal
 import ProductsPage from "@/pages/products/ProductsPage";
 import ProductDetailPage from "@/pages/products/ProductDetailPage";
 import ProductAttributesPage from "@/pages/products/ProductAttributesPage";
-import ProductCredentialsPage from "@/pages/products/ProductCredentialsPage"; // NEW
+import ProductCredentialsPage from "@/pages/products/ProductCredentialsPage";
 import DPPViewerPage from "@/pages/products/DPPViewerPage";
+
+// Viewer VP
+import VPViewerPage from "@/pages/viewer/VPViewerPage"; // NEW
 
 export default function AppRouter() {
   return (
@@ -96,6 +100,15 @@ export default function AppRouter() {
             element={
               <RequireRole role="company">
                 <CompanyCompliancePage />
+              </RequireRole>
+            }
+          />
+          {/* NEW: gestione VC organizzazione */}
+          <Route
+            path="/company/credentials"
+            element={
+              <RequireRole role="company">
+                <OrganizationCredentialPage />
               </RequireRole>
             }
           />
@@ -173,7 +186,6 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* NEW: pagina Credenziali VC */}
           <Route
             path="/creator/products/:id/credentials"
             element={
@@ -199,6 +211,16 @@ export default function AppRouter() {
             }
           />
 
+          {/* VP Viewer (protetto, accesso company) */}
+          <Route
+            path="/viewer/:vpId"
+            element={
+              <RequireRole role="company">
+                <VPViewerPage />
+              </RequireRole>
+            }
+          />
+
           {/* Operator */}
           <Route
             path={ROUTES.operator}
@@ -208,7 +230,6 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-
           {/* Machine */}
           <Route
             path={ROUTES.machine}
