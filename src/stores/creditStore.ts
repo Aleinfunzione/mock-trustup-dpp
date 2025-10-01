@@ -1,0 +1,279 @@
+// src/stores/creditStore.ts
+import { PRICE_TABLE, SPONSORSHIP, getActionCost } from "@/config/creditPolicy";
+import type {
+  AccountOwnerType,
+  CreditAction,
+  CreditAccount,
+  CreditTx,
+  SponsorshipRule,
+  ConsumeActor,
+  ConsumeResult,
+  ConsumeResultOk,
+} from "@/types/credit";
+import { STORAGE_KEYS } from "@/utils/constants";
+
+type AccountsIndex = Record<string, CreditAccount>;
+type Meta = { version: number; counter: number };
+
+const KEYS = {
+  ACCOUNTS: (STORAGE_KEYS as any)?.CREDITS_ACCOUNTS ?? "trustup:credits:accounts",
+  TX: (STORAGE_KEYS as any)?.CREDITS_TX ?? "trustup:credits:tx",
+  META: (STORAGE_KEYS as any)?.CREDITS_META ?? "trustup:credits:meta",
+};
+
+// Wrapper locali robusti
+function readJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writeJSON(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // no-op
+  }
+}
+
+function nowISO() { return new Date().toISOString(); }
+
+function loadAccounts(): AccountsIndex {
+  return readJSON<AccountsIndex>(KEYS.ACCOUNTS, {});
+}
+function loadTx(): CreditTx[] {
+  return readJSON<CreditTx[]>(KEYS.TX, []);
+}
+function loadMeta(): Meta {
+  return readJSON<Meta>(KEYS.META, { version: 0, counter: 0 });
+}
+
+function saveAll(nextAccounts: AccountsIndex, nextTx: CreditTx[], prevMeta?: Meta) {
+  const meta = loadMeta();
+  if (prevMeta && meta.version !== prevMeta.version) return false;
+  writeJSON(KEYS.ACCOUNTS, nextAccounts);
+  writeJSON(KEYS.TX, nextTx);
+  const nextMeta: Meta = { version: meta.version + 1, counter: meta.counter };
+  writeJSON(KEYS.META, nextMeta);
+  return true;
+}
+
+function bumpCounter(): number {
+  const meta = loadMeta();
+  const next: Meta = { version: meta.version, counter: meta.counter + 1 };
+  writeJSON(KEYS.META, next);
+  return next.counter;
+}
+
+function txId(prefix = "tx"): string { return `${prefix}_${Date.now()}_${bumpCounter()}`; }
+
+export function getAccountId(ownerType: AccountOwnerType, ownerId: string): string {
+  return `acc:${ownerType}:${ownerId}`;
+}
+
+function getAdminAccountId(): string | undefined {
+  const accounts = loadAccounts();
+  const admin = Object.values(accounts).find((a) => a.ownerType === "admin");
+  return admin?.id;
+}
+
+export function ensureAccounts(seed: {
+  adminId: string;
+  companyIds: string[];
+  memberIds: { type: AccountOwnerType; id: string }[];
+  defaults?: { balance?: number; threshold?: number };
+}): void {
+  let accounts = loadAccounts();
+  const tx = loadTx();
+  const meta = loadMeta();
+
+  const { adminId, companyIds, memberIds, defaults } = seed;
+  const defBalance = defaults?.balance ?? 0;
+  const defThreshold = defaults?.threshold ?? 0;
+
+  const addIfMissing = (ownerType: AccountOwnerType, ownerId: string) => {
+    const id = getAccountId(ownerType, ownerId);
+    if (!accounts[id]) {
+      accounts[id] = {
+        id, ownerType, ownerId,
+        balance: defBalance,
+        lowBalanceThreshold: defThreshold,
+        updatedAt: nowISO(),
+      };
+    }
+  };
+
+  addIfMissing("admin", adminId);
+  companyIds.forEach((cid) => addIfMissing("company", cid));
+  memberIds.forEach(({ type, id }) => addIfMissing(type, id));
+
+  saveAll(accounts, tx, meta);
+}
+
+export function getBalance(accountId: string): number {
+  const acc = loadAccounts()[accountId];
+  return acc?.balance ?? 0;
+}
+
+export function history(params?: { accountId?: string; limit?: number }): CreditTx[] {
+  const all = loadTx();
+  let list = all;
+  if (params?.accountId) {
+    list = all.filter((t) => t.fromAccountId === params.accountId || t.toAccountId === params.accountId);
+  }
+  if (params?.limit && params.limit > 0) return list.slice(-params.limit);
+  return list;
+}
+
+function mustAccount(id: string): CreditAccount {
+  const acc = loadAccounts()[id];
+  if (!acc) throw new Error(`Account non trovato: ${id}`);
+  return acc;
+}
+
+function persistAccountsAndTx(nextAccounts: AccountsIndex, appendedTx: CreditTx[], prevMeta: Meta, retries = 2) {
+  const nextTx = [...loadTx(), ...appendedTx];
+  for (let i = 0; i <= retries; i++) {
+    if (saveAll(nextAccounts, nextTx, i === 0 ? prevMeta : undefined)) return true;
+  }
+  return false;
+}
+
+export function topup(toAccountId: string, amount: number, meta?: any): CreditTx {
+  if (!Number.isInteger(amount) || amount <= 0) throw new Error("amount deve essere intero > 0");
+  const prevMeta = loadMeta();
+  const accounts = { ...loadAccounts() };
+  const acc = mustAccount(toAccountId);
+  const tx: CreditTx = {
+    id: txId("topup"), ts: nowISO(), type: "topup",
+    toAccountId, amount, meta,
+  };
+  accounts[toAccountId] = { ...acc, balance: acc.balance + amount, updatedAt: tx.ts };
+  const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
+  if (!ok) throw new Error("Race condition nel salvataggio topup");
+  return tx;
+}
+
+export function transfer(fromAccountId: string, toAccountId: string, amount: number, meta?: any): CreditTx {
+  if (!Number.isInteger(amount) || amount <= 0) throw new Error("amount deve essere intero > 0");
+  if (fromAccountId === toAccountId) throw new Error("from e to coincidono");
+  const prevMeta = loadMeta();
+  const accounts = { ...loadAccounts() };
+  const from = mustAccount(fromAccountId);
+  const to = mustAccount(toAccountId);
+  if (from.balance < amount) throw new Error("Fondi insufficienti");
+
+  const ts = nowISO();
+  const tx: CreditTx = {
+    id: txId("transfer"), ts, type: "transfer",
+    fromAccountId, toAccountId, amount, meta,
+  };
+
+  accounts[fromAccountId] = { ...from, balance: from.balance - amount, updatedAt: ts };
+  accounts[toAccountId] = { ...to, balance: to.balance + amount, updatedAt: ts };
+
+  const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
+  if (!ok) throw new Error("Race condition nel salvataggio transfer");
+  return tx;
+}
+
+function resolvePayer(
+  action: CreditAction,
+  actor: ConsumeActor,
+  cost: number
+): { payerAccountId?: string; reason?: "NO_PAYER" | "INSUFFICIENT_FUNDS" } {
+  const rule: SponsorshipRule | undefined = SPONSORSHIP[action];
+  if (!rule) return { reason: "NO_PAYER" };
+
+  const accounts = loadAccounts();
+  const chain = rule.payerOrder
+    .map((who) => {
+      if (who === "actor") return getAccountId(actor.ownerType, actor.ownerId);
+      if (who === "company") {
+        if (!actor.companyId) return undefined;
+        return getAccountId("company", actor.companyId);
+      }
+      if (who === "admin") return getAdminAccountId();
+      return undefined;
+    })
+    .filter(Boolean) as string[];
+
+  if (chain.length === 0) return { reason: "NO_PAYER" };
+
+  for (const accId of chain) {
+    const bal = accounts[accId]?.balance ?? 0;
+    if (bal >= cost) return { payerAccountId: accId };
+  }
+  return { reason: "INSUFFICIENT_FUNDS" };
+}
+
+export function simulate(action: CreditAction, actor: ConsumeActor, qty = 1): { cost: number; payer?: string; reason?: string } {
+  const cost = getActionCost(action, qty);
+  const res = resolvePayer(action, actor, cost);
+  return { cost, payer: res.payerAccountId, reason: res.reason };
+}
+
+export function consume(
+  action: CreditAction,
+  actor: ConsumeActor,
+  ref?: { kind: string; id: string },
+  qty = 1
+): ConsumeResult {
+  const unit = PRICE_TABLE[action];
+  if (!Number.isInteger(unit) || unit <= 0) {
+    return { ok: false, reason: "NO_PAYER", detail: `Prezzo non definito per ${action}` };
+  }
+  const n = Number.isInteger(qty) && qty > 0 ? qty : 1;
+  const cost = unit * n;
+
+  const { payerAccountId, reason } = resolvePayer(action, actor, cost);
+  if (!payerAccountId) {
+    return { ok: false, reason: reason ?? "NO_PAYER", detail: { action, actor, cost } };
+  }
+
+  const prevMeta = loadMeta();
+  const accounts = { ...loadAccounts() };
+  const payer = mustAccount(payerAccountId);
+  if (payer.balance < cost) {
+    return { ok: false, reason: "INSUFFICIENT_FUNDS", detail: { payerAccountId, cost, balance: payer.balance } };
+  }
+
+  const ts = nowISO();
+  const tx: CreditTx = {
+    id: txId("consume"), ts, type: "consume",
+    fromAccountId: payerAccountId, amount: cost, action, ref, meta: { actor },
+  };
+
+  accounts[payerAccountId] = { ...payer, balance: payer.balance - cost, updatedAt: ts };
+
+  const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
+  if (!ok) return { ok: false, reason: "NO_PAYER", detail: "Race condition nel salvataggio consume" };
+
+  const result: ConsumeResultOk = { ok: true, payerAccountId, tx };
+  return result;
+}
+
+export function setLowBalanceThreshold(accountId: string, threshold: number) {
+  if (!Number.isInteger(threshold) || threshold < 0) throw new Error("threshold deve essere intero >= 0");
+  const prevMeta = loadMeta();
+  const accounts = { ...loadAccounts() };
+  const acc = mustAccount(accountId);
+  accounts[accountId] = { ...acc, lowBalanceThreshold: threshold, updatedAt: nowISO() };
+  const ok = persistAccountsAndTx(accounts, [], prevMeta);
+  if (!ok) throw new Error("Race condition nel salvataggio threshold");
+}
+
+export function isLowBalance(accountId: string): boolean {
+  const acc = loadAccounts()[accountId];
+  if (!acc) return false;
+  const thr = acc.lowBalanceThreshold ?? 0;
+  return acc.balance <= thr;
+}
+
+export function __resetAll() {
+  writeJSON(KEYS.ACCOUNTS, {});
+  writeJSON(KEYS.TX, []);
+  writeJSON(KEYS.META, { version: 0, counter: 0 } as Meta);
+}

@@ -5,9 +5,17 @@
  * Mantiene retro-compatibilità con la versione precedente del file.
  */
 export const STORAGE_KEYS = {
+  // Auth/Identità
   currentUser: "trustup.currentUser",
   identityRegistry: "trustup.identityRegistry",
+
+  // Ledger crediti (legacy – deprecato in favore delle chiavi CREDITS_*)
   creditsLedger: "trustup.creditsLedger",
+
+  // Crediti (nuovo sistema)
+  CREDITS_ACCOUNTS: "trustup:credits:accounts",
+  CREDITS_TX: "trustup:credits:tx",
+  CREDITS_META: "trustup:credits:meta",
 
   // Prodotti (MOCK)
   products: "trustup.products",
@@ -19,27 +27,48 @@ export const STORAGE_KEYS = {
   // VC (nuove)
   orgVC: "trustup:vc:org",
   prodVC: "trustup:vc:prod",
+
+  // Snapshot VP/DPP pubblicati
+  vpSnapshots: "trustup:vp:snapshots",
 } as const;
 
 /**
  * Routes principali. Mantiene i path già utilizzati.
+ * Aggiunte: viewer pubblico e pagina DPP prodotto.
  */
 export const ROUTES = {
   login: "/login",
   admin: "/admin",
+
   company: "/company", // Home azienda
   companyTeam: "/company/team", // Gestione membri
-  companyCompliance: "/company/compliance", // NEW
+  companyCompliance: "/company/compliance",
+  companyCredentials: "/company/credentials", // opzionale: /company/credentials?std=...
 
   creator: "/creator",
-  creatorProductCredentials: "/creator/products/:id/credentials", // NEW
+  creatorProductCredentials: "/creator/products/:id/credentials",
+
+  // Prodotto → DPP/VP
+  productDpp: "/products/:id/dpp",
 
   operator: "/operator",
   machine: "/machine",
+
+  // Viewer pubblico
+  viewerVp: "/viewer/:vpId",
+} as const;
+
+/**
+ * Feature flags letti da env (Vite).
+ */
+export const FEATURES = {
+  CREDENTIALS: import.meta.env.VITE_FEATURE_CREDENTIALS === "true",
+  COMPLIANCE: import.meta.env.VITE_FEATURE_COMPLIANCE === "true",
 } as const;
 
 /**
  * Costi/fees mock dell'applicazione.
+ * (Puoi mantenere per compat senza toccare il nuovo PRICE_TABLE.)
  */
 export const COSTS = {
   publishVC: 1, // costo (mock) in crediti per emettere un DPP/VC

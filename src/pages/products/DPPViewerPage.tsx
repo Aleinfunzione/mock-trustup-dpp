@@ -10,11 +10,22 @@ import type { ComplianceReport } from "@/domains/compliance/services";
 import { useCredentialStore } from "@/stores/credentialStore";
 import { getProductById } from "@/services/api/products";
 
-type Snapshot = {
-  id: string;
-  publishedAt: string;
-  content: VerifiablePresentation;
-} | null;
+import { useAuth } from "@/hooks/useAuth";
+import { consumeForAction } from "@/services/api/credits";
+import type { AccountOwnerType } from "@/types/credit";
+
+type Snapshot =
+  | {
+      id: string;
+      publishedAt: string;
+      content: VerifiablePresentation;
+    }
+  | null;
+
+// type-guard per il ramo errore dei crediti
+function isErr<T extends { ok: boolean }>(r: T): r is T & { ok: false; reason?: unknown } {
+  return r.ok === false;
+}
 
 export default function DPPViewerPage() {
   const { id: productId, dppId: routeDppId } = useParams<{ id?: string; dppId?: string }>();
@@ -29,6 +40,7 @@ export default function DPPViewerPage() {
   const [err, setErr] = React.useState<string | null>(null);
 
   const { org, prod, load } = useCredentialStore();
+  const { currentUser } = useAuth();
 
   const loadAll = React.useCallback(async () => {
     if (routeDppId) {
@@ -39,7 +51,7 @@ export default function DPPViewerPage() {
         if (!snap) throw new Error("Snapshot non trovato");
         setSnapshot({
           id: routeDppId,
-          publishedAt: new Date().toISOString(), // mock timestamp
+          publishedAt: new Date().toISOString(),
           content: snap,
         });
         setVpPreview(null);
@@ -56,10 +68,7 @@ export default function DPPViewerPage() {
     setLoading(true);
     setErr(null);
     try {
-      // assicura presenza in memoria
       load?.();
-
-      // coerenza con UX legacy
       getProductById(productId);
 
       const orgVC = org || {};
@@ -106,6 +115,20 @@ export default function DPPViewerPage() {
         vp = res.vp;
       }
 
+      // consumo crediti prima della pubblicazione
+      const u = currentUser as any;
+      const actor = {
+        ownerType: (currentUser?.role ?? "company") as AccountOwnerType,
+        ownerId: (u?.id ?? u?.did) as string,
+        companyId: (u?.companyId ?? u?.companyDid) as string | undefined,
+      };
+      const debit = consumeForAction("VP_PUBLISH", actor, { kind: "vp", id: productId });
+      if (isErr(debit)) {
+        const reason = String(debit.reason ?? "UNKNOWN");
+        if (reason === "INSUFFICIENT_FUNDS") throw new Error("Crediti insufficienti per pubblicare la VP");
+        throw new Error(`Errore crediti: ${reason}`);
+      }
+
       const result = await WorkflowOrchestrator.publishVP(vp);
       if (!result.ok) {
         const msg = (result as any).message ?? "Publish VP fallito";
@@ -118,7 +141,6 @@ export default function DPPViewerPage() {
         content: result.vp,
       });
 
-      // URL stabile legacy
       navigate(`/company/products/${productId}/dpp`, { replace: true });
     } catch (e: any) {
       setErr(e?.message || "Errore pubblicazione VP");
@@ -139,7 +161,10 @@ export default function DPPViewerPage() {
             <ul className="list-disc pl-5 space-y-1">
               {report.missing.map((m, i) => (
                 <li key={i}>
-                  <span className="font-mono">{m.scope}:{m.standard}</span> — {m.reason}
+                  <span className="font-mono">
+                    {m.scope}:{m.standard}
+                  </span>{" "}
+                  — {m.reason}
                   {m.fields?.length ? ` (campi: ${m.fields.join(", ")})` : ""}
                 </li>
               ))}

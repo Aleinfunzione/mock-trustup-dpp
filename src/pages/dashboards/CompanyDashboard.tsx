@@ -1,38 +1,40 @@
-import { useMemo } from "react"
-import { useAuth } from "@/hooks/useAuth"
+// src/pages/dashboards/CompanyDashboard.tsx
+import { useMemo } from "react";
+import { useAuth } from "@/hooks/useAuth";
 import {
   getCompany,
   listCompanyMembers,
   listCompanyMemberSeeds,
   getActor,
-} from "@/services/api/identity"
+} from "@/services/api/identity";
+import CompanyCreditsSection from "@/components/company/CompanyCreditsSection";
 
 export default function CompanyDashboard() {
-  const { currentUser } = useAuth()
+  const { currentUser } = useAuth();
 
-  // Fallback robusto: se nello store manca companyDid, lo recupero dal registro attori
-  const actor = currentUser?.did ? getActor(currentUser.did) : undefined
-  const companyDid = currentUser?.companyDid ?? actor?.companyDid
-  const company = companyDid ? getCompany(companyDid) : undefined
+  // Fallback robusto
+  const actor = currentUser?.did ? getActor(currentUser.did) : undefined;
+  const companyDid = currentUser?.companyDid ?? actor?.companyDid;
+  const company = companyDid ? getCompany(companyDid) : undefined;
 
   const members = useMemo(
     () => (companyDid ? listCompanyMembers(companyDid) : []),
     [companyDid]
-  )
+  );
   const seeds = useMemo(
     () => (companyDid ? listCompanyMemberSeeds(companyDid) : []),
     [companyDid]
-  )
+  );
 
   const counts = useMemo(() => {
-    const c = { creator: 0, operator: 0, machine: 0 }
+    const c = { creator: 0, operator: 0, machine: 0 };
     for (const m of members) {
-      if (m.role === "creator") c.creator++
-      if (m.role === "operator") c.operator++
-      if (m.role === "machine") c.machine++
+      if (m.role === "creator") c.creator++;
+      if (m.role === "operator") c.operator++;
+      if (m.role === "machine") c.machine++;
     }
-    return c
-  }, [members])
+    return c;
+  }, [members]);
 
   return (
     <div className="space-y-6">
@@ -70,6 +72,12 @@ export default function CompanyDashboard() {
 
       {companyDid && (
         <>
+          {/* Sezione crediti */}
+          <section className="rounded-md border p-4">
+            <h2 className="font-semibold mb-2">Crediti</h2>
+            <CompanyCreditsSection />
+          </section>
+
           <section className="rounded-md border p-4">
             <h2 className="font-semibold">Riepilogo team</h2>
             <div className="mt-2 text-sm text-muted-foreground">
@@ -100,5 +108,5 @@ export default function CompanyDashboard() {
         </>
       )}
     </div>
-  )
+  );
 }
