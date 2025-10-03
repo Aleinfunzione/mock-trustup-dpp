@@ -6,7 +6,6 @@ import { useAuth } from "@/hooks/useAuth";
 import BackButton from "./BackButton";
 import ComplianceIndicator from "@/components/ComplianceIndicator";
 import CreditsBadge from "@/components/credit/CreditsBadge";
-import type { AccountOwnerType } from "@/types/credit";
 
 function shortId(id?: string) {
   if (!id) return "";
@@ -48,22 +47,6 @@ export default function Header() {
   const userDid = currentUser?.did;
   const companyDid = currentUser?.companyDid;
 
-  // Fallback robusti su shape di currentUser
-  const actorRef =
-    currentUser && role
-      ? (() => {
-          const u = currentUser as any;
-          const owner = (u.id ?? u.did) as string | undefined;
-          const comp = (u.companyId ?? u.companyDid) as string | undefined;
-          if (!owner) return undefined;
-          return {
-            ownerType: role as AccountOwnerType,
-            ownerId: owner,
-            companyId: comp,
-          };
-        })()
-      : undefined;
-
   return (
     <header
       className="
@@ -97,7 +80,7 @@ export default function Header() {
 
       <div className="flex items-center gap-2">
         {/* Badge crediti */}
-        {actorRef && <CreditsBadge actor={actorRef} showCompany showActor refreshMs={5000} />}
+        <CreditsBadge />
 
         {/* DID utente e azienda */}
         {companyDid && (
