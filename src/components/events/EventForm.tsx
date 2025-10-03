@@ -22,6 +22,9 @@ import {
 // ---- identity (fallback robusto ai vari nomi funzione/campo)
 import * as IdentityApi from "@/services/api/identity";
 
+// ---- crediti
+import { canAfford, consume, costOf } from "@/services/orchestration/creditsPublish";
+
 type EventFormProps = {
   defaultProductId?: string;
   assignedToDid?: string;
@@ -128,6 +131,10 @@ export default function EventForm({
   const [assignee, setAssignee] = useState<string>("");
   const [actors, setActors] = useState<Actor[]>([]);
 
+  // crediti
+  const [canPay, setCanPay] = useState<boolean>(true);
+  const eventCost = costOf("EVENT_CREATE" as any);
+
   // vari
   const [submitting, setSubmitting] = useState(false);
 
@@ -199,6 +206,25 @@ export default function EventForm({
     });
   }, [currentUser?.companyDid, currentUser?.did]);
 
+  // pre-gating crediti
+  useEffect(() => {
+    let alive = true;
+    async function checkCredits() {
+      if (!currentUser?.did) return setCanPay(true);
+      try {
+        const ok = await canAfford("EVENT_CREATE" as any, {
+          payer: currentUser.did,
+          company: currentUser.companyDid,
+        } as any);
+        if (alive) setCanPay(ok);
+      } catch {
+        if (alive) setCanPay(false);
+      }
+    }
+    checkCredits();
+    return () => { alive = false; };
+  }, [currentUser?.did, currentUser?.companyDid]);
+
   const allowedTypes =
     Array.isArray(EVENT_TYPES) && EVENT_TYPES.length
       ? [...EVENT_TYPES, "Altro"]
@@ -208,6 +234,7 @@ export default function EventForm({
 
   const canSubmit =
     !submitting &&
+    canPay &&
     !!currentUser?.did &&
     productId.length > 0 &&
     effectiveType.length > 0 &&
@@ -235,6 +262,28 @@ export default function EventForm({
 
     setSubmitting(true);
     try {
+      // Gate crediti
+      const ok = await canAfford("EVENT_CREATE" as any, {
+        payer: currentUser.did,
+        company: currentUser.companyDid,
+      } as any);
+      if (!ok) {
+        setCanPay(false);
+        throw Object.assign(new Error("Crediti insufficienti"), { code: "INSUFFICIENT_CREDITS" });
+      }
+
+      // Consume prima della creazione evento
+      await consume("EVENT_CREATE" as any, {
+        payer: currentUser.did,
+        company: currentUser.companyDid,
+      } as any, {
+        kind: "event",
+        productId,
+        type: effectiveType,
+        scope,
+        nodeId: scope === "bom" ? targetNodeId : undefined,
+      });
+
       const targetMeta =
         scope === "bom"
           ? bomOptions.find((o) => o.id === targetNodeId) || null
@@ -261,7 +310,8 @@ export default function EventForm({
         title: "Evento registrato",
         description:
           `#${evt.id} • ${effectiveType}` +
-          (scope === "bom" && targetMeta?.label ? ` • BOM: ${targetMeta.label}` : ""),
+          (scope === "bom" && targetMeta?.label ? ` • BOM: ${targetMeta.label}` : "") +
+          ` • costo ${eventCost} crediti`,
       });
 
       if (!defaultProductId) setProductId("");
@@ -432,8 +482,12 @@ export default function EventForm({
             </div>
           )}
 
-          <CardFooter className="px-0">
-            <Button type="submit" className="w-full" disabled={!canSubmit || submitting}>
+          <CardFooter className="px-0 flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="text-xs text-muted-foreground">
+              Costo azione: <span className="font-mono">{eventCost}</span> crediti
+              {!canPay && <span className="text-destructive ml-2">• crediti insufficienti</span>}
+            </div>
+            <Button type="submit" className="w-full sm:w-auto" disabled={!canSubmit || submitting}>
               {submitting ? "Salvataggio…" : "Registra evento"}
             </Button>
           </CardFooter>

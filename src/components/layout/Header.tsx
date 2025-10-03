@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { ModeToggle } from "@/components/mode-toggle";
 import { useAuth } from "@/hooks/useAuth";
 import BackButton from "./BackButton";
-import ComplianceIndicator from "@/components/ComplianceIndicator";
 import CreditsBadge from "@/components/credit/CreditsBadge";
 
 function shortId(id?: string) {
@@ -47,6 +46,15 @@ export default function Header() {
   const userDid = currentUser?.did;
   const companyDid = currentUser?.companyDid;
 
+  const actor =
+    role && userDid
+      ? {
+          ownerType: role,
+          ownerId: userDid,
+          companyId: companyDid,
+        }
+      : undefined;
+
   return (
     <header
       className="
@@ -79,8 +87,8 @@ export default function Header() {
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Badge crediti */}
-        <CreditsBadge />
+        {/* Unico badge crediti: solo attore */}
+        <CreditsBadge actor={actor} showCompany={false} showActor compact refreshMs={5000} />
 
         {/* DID utente e azienda */}
         {companyDid && (
@@ -92,21 +100,6 @@ export default function Header() {
           <span className="hidden sm:inline text-xs font-mono text-muted-foreground" title={`did: ${userDid}`}>
             did:{shortId(userDid)}
           </span>
-        )}
-
-        {/* Indicatore compliance + quick links role=company */}
-        {role === "company" && (
-          <div className="flex items-center gap-2">
-            <ComplianceIndicator />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate(`${base}/credentials`)}
-              title="Gestisci credenziali organizzazione"
-            >
-              Credenziali
-            </Button>
-          </div>
         )}
 
         <ModeToggle />

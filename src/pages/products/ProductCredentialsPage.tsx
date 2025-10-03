@@ -1,3 +1,4 @@
+// src/pages/products/ProductCredentialsPage.tsx
 import * as React from "react";
 import { useParams, Link } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
@@ -12,6 +13,8 @@ import { createProductVC, verifyProductVC } from "@/domains/product/services";
 import type { VerifiableCredential } from "@/domains/credential/entities";
 import { useAuthStore } from "@/stores/authStore";
 import { getProductById } from "@/services/api/products";
+import { canAfford, consume, costOf } from "@/services/orchestration/creditsPublish";
+import { notifyError, notifySuccess } from "@/stores/uiStore";
 
 import Form from "@rjsf/core";
 import type { IChangeEvent } from "@rjsf/core";
@@ -41,6 +44,8 @@ export default function ProductCredentialsPage() {
   const [previewVC, setPreviewVC] = React.useState<VerifiableCredential<any> | null>(null);
   const [verifStatus, setVerifStatus] = React.useState<"idle" | "valid" | "invalid">("idle");
   const [busy, setBusy] = React.useState<boolean>(false);
+  const [canPay, setCanPay] = React.useState<boolean>(true);
+  const vcCost = costOf("VC_CREATE" as any);
 
   React.useEffect(() => {
     load?.();
@@ -77,11 +82,28 @@ export default function ProductCredentialsPage() {
       }
     }
     run();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [standard, productId]);
+
+  // Pre-gating crediti
+  React.useEffect(() => {
+    let alive = true;
+    async function checkCredits() {
+      if (!currentUser?.did) return setCanPay(true);
+      try {
+        const ok = await canAfford("VC_CREATE" as any, {
+          payer: currentUser.did,
+          company: currentUser.companyDid,
+        } as any);
+        if (alive) setCanPay(ok);
+      } catch {
+        if (alive) setCanPay(false);
+      }
+    }
+    checkCredits();
+    return () => { alive = false; };
+  }, [currentUser?.did, currentUser?.companyDid, standard, schema]);
 
   async function handleValidateLive(nextData: any) {
     const res = await validateStandard(standard, nextData);
@@ -106,14 +128,37 @@ export default function ProductCredentialsPage() {
     setVerifStatus("idle");
     try {
       if (!issuerDid) throw new Error("Issuer DID non disponibile");
+      if (!currentUser?.did) throw new Error("Contesto utente non disponibile");
+
+      // Gate crediti
+      const afford = await canAfford("VC_CREATE" as any, {
+        payer: currentUser.did,
+        company: currentUser.companyDid,
+      } as any);
+      if (!afford) {
+        setCanPay(false);
+        throw Object.assign(new Error("Crediti insufficienti"), { code: "INSUFFICIENT_CREDITS" });
+      }
+
+      // Consume prima della creazione
+      await consume("VC_CREATE" as any, {
+        payer: currentUser.did,
+        company: currentUser.companyDid,
+      } as any, { kind: "vc", productId, standard });
+
       const vc = await createProductVC({ standard, issuerDid, subject: e.formData });
       upsertProdVC(productId, standard, vc);
       setPreviewVC(vc);
+
       const ver = await verifyProductVC(vc);
       setVerifStatus(ver.valid ? "valid" : "invalid");
       setValidMsg(ver.valid ? "VC firmata e verificata" : "VC firmata ma NON verificata");
+
+      notifySuccess("VC emessa", `Azione VC_CREATE consumata (${vcCost} crediti).`);
     } catch (err: any) {
-      setErrorMsg(err?.message || "Errore creazione VC");
+      const msg = err?.message || "Errore creazione VC";
+      setErrorMsg(msg);
+      notifyError(err, "Impossibile emettere la VC");
     } finally {
       setBusy(false);
     }
@@ -134,6 +179,7 @@ export default function ProductCredentialsPage() {
       setFormData(existingVC.credentialSubject || {});
     } catch (err: any) {
       setErrorMsg(err?.message || "Errore verifica VC");
+      notifyError(err, "Errore verifica VC");
     } finally {
       setBusy(false);
     }
@@ -188,13 +234,17 @@ export default function ProductCredentialsPage() {
             </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Button asChild variant="outline" disabled={busy}>
               <Link to="..">Indietro</Link>
             </Button>
             <Button variant="secondary" onClick={onVerifyExisting} disabled={busy || !existingVC}>
               Verifica VC esistente
             </Button>
+            <div className="ml-auto text-xs text-muted-foreground">
+              Costo azione: <span className="font-mono">{vcCost}</span> crediti
+              {!canPay && <span className="text-destructive ml-2">• crediti insufficienti</span>}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -219,7 +269,7 @@ export default function ProductCredentialsPage() {
               noHtml5Validate
             >
               <div className="flex gap-2">
-                <Button type="submit" disabled={busy}>Salva e firma VC</Button>
+                <Button type="submit" disabled={busy || !canPay}>Salva e firma VC</Button>
                 <Button type="button" variant="outline" disabled={busy} onClick={() => setFormData({})}>
                   Reset
                 </Button>
