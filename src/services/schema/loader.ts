@@ -1,20 +1,20 @@
-// /src/services/schema/loader.ts
+// src/services/schema/loader.ts
 // Caricatore di JSON Schema da /public/schemas con caching in-memory.
-// - Supporta path assoluti ("/schemas/*.json"), relativi ("schemas/*.json") e URL http(s).
-// - Deduplica richieste concorrenti.
-// - Bust-cache opzionale e versioning (query v=).
-// - Integrazione con StandardsRegistry per caricare per StandardId.
-// - Sanity-check base sul JSON Schema caricato.
-// - Prefetch multiplo e utilità cache.
+// - Path assoluti/relativi/URL http(s)
+// - Deduplica richieste concorrenti
+// - Bust-cache + version (?v=)
+// - Integrazione StandardsRegistry
+// - Prefetch multiplo e on-idle
+// - Statistiche cache
 
 import type { StandardId } from "@/config/standardsRegistry";
 import { StandardsRegistry } from "@/config/standardsRegistry";
 
 type LoaderOptions = {
-  bustCache?: boolean;           // ignora cache in-memory
-  version?: string | number;     // aggiunge ?v= alla URL risolta e alla chiave cache
-  signal?: AbortSignal;          // annulla fetch se necessario
-  expectId?: string;             // opzionale: valida contro $id dello schema
+  bustCache?: boolean;
+  version?: string | number;
+  signal?: AbortSignal;
+  expectId?: string;
 };
 
 const schemaCache = new Map<string, any>();
@@ -30,7 +30,6 @@ function baseUrl(): string {
 function normalizePath(p: string): string {
   if (/^https?:\/\//i.test(p)) return p;
   const withSlash = p.startsWith("/") ? p : `/${p}`;
-  // Se già sotto /schemas, non duplicare segmenti
   return `${baseUrl()}${withSlash}`;
 }
 
@@ -51,7 +50,6 @@ function assertSchemaLike(json: any, opts?: LoaderOptions) {
   if (typeof json !== "object" || json == null) {
     throw new Error("Schema caricato non è un oggetto");
   }
-  // Non obblighiamo sempre $schema/$id, ma se presenti validiamo formati base
   if (json.$schema && typeof json.$schema !== "string") {
     throw new Error("Campo $schema non valido");
   }
@@ -60,15 +58,11 @@ function assertSchemaLike(json: any, opts?: LoaderOptions) {
   }
 }
 
-/**
- * Carica uno schema JSON con cache e deduplica.
- * @param schemaPath Path come "/schemas/foo.json" | "schemas/foo.json" | URL http(s)
- * @param opts  bustCache | version | signal | expectId
- */
+/** Carica uno schema JSON con cache e deduplica. */
 export async function loadSchema(schemaPath: string, opts?: LoaderOptions): Promise<any> {
   const url = normalizePath(schemaPath);
   const urlWithV = applyVersion(url, opts?.version);
-  const key = opts?.version ? `${url}::v=${opts.version}` : url;
+  const key = cacheKey(schemaPath, opts?.version);
 
   if (!opts?.bustCache && schemaCache.has(key)) return schemaCache.get(key);
   if (inflight.has(key)) return inflight.get(key)!;
@@ -98,10 +92,7 @@ export async function loadSchema(schemaPath: string, opts?: LoaderOptions): Prom
   return prom;
 }
 
-/**
- * Carica lo schema associato a uno StandardId dal Registry.
- * Usa StandardsRegistry[standardId].schemaPath e .version come query v.
- */
+/** Carica lo schema associato a uno StandardId dal Registry. */
 export async function loadStandardSchema(standardId: StandardId, opts?: Omit<LoaderOptions, "version">): Promise<any> {
   const std = StandardsRegistry[standardId];
   if (!std) throw new Error(`Standard non registrato: ${standardId}`);
@@ -124,10 +115,52 @@ export async function prefetchSchemas(
       }
     } catch (err) {
       if (!ignoreErrors) throw err;
-      // swallow
     }
   });
   await Promise.all(tasks);
+}
+
+/** Elenco completo dal registry, utile per prefetch. */
+export function registryPrefetchEntries(): Array<{ standardId: StandardId; version?: string | number }> {
+  // StandardsRegistry è un record {id -> {schemaPath, version}}
+  return Object.keys(StandardsRegistry).map((id) => ({
+    standardId: id as StandardId,
+    version: (StandardsRegistry as any)[id]?.version,
+  }));
+}
+
+/** Prefetch di tutti gli standard registrati. */
+export async function prefetchRegistrySchemas(ignoreErrors = true): Promise<void> {
+  const entries = registryPrefetchEntries();
+  await prefetchSchemas(entries, ignoreErrors);
+}
+
+/** Schedula il prefetch on-idle. Ritorna funzione di cancel. */
+export function prefetchOnIdle(
+  entries: Array<{ path?: string; standardId?: StandardId; version?: string | number }> = registryPrefetchEntries(),
+  ignoreErrors = true,
+  timeout = 3000
+): () => void {
+  let cancelled = false;
+
+  const run = () => {
+    if (cancelled) return;
+    void prefetchSchemas(entries, ignoreErrors);
+  };
+
+  if (typeof window !== "undefined" && (window as any).requestIdleCallback) {
+    const h = (window as any).requestIdleCallback(run, { timeout });
+    return () => {
+      cancelled = true;
+      (window as any).cancelIdleCallback?.(h);
+    };
+  } else {
+    const t = setTimeout(run, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }
 }
 
 /** Svuota completamente la cache in-memory. */
@@ -136,7 +169,7 @@ export function clearSchemaCache() {
   inflight.clear();
 }
 
-/** Rimuove una singola voce di cache. Accetta path o URL e opzionale version. */
+/** Rimuove una singola voce di cache. */
 export function evictSchema(schemaPath: string, version?: string | number) {
   schemaCache.delete(cacheKey(schemaPath, version));
 }
@@ -146,7 +179,7 @@ export function getSchemaFromCache(schemaPath: string, version?: string | number
   return schemaCache.get(cacheKey(schemaPath, version));
 }
 
-/** Ritorna statistiche cache utili per debug. */
+/** Statistiche cache utili per debug. */
 export function getSchemaCacheStats() {
   return {
     size: schemaCache.size,

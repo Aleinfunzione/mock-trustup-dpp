@@ -1,13 +1,7 @@
 // src/config/creditPolicy.ts
-import type {
-  PriceTable,
-  SponsorshipPolicy,
-  CreditAction,
-} from "@/types/credit";
+import type { PriceTable, SponsorshipPolicy, CreditAction } from "@/types/credit";
 
-/**
- * Prezzi per azione (unità: crediti interi)
- */
+/** Prezzi per azione (crediti) */
 export const PRICE_TABLE: PriceTable = Object.freeze({
   VC_CREATE: 3,
   VP_PUBLISH: 5,
@@ -32,9 +26,17 @@ export const SPONSORSHIP: SponsorshipPolicy = Object.freeze({
   MACHINE_AUTOCOMPLETE: { payerOrder: ["actor", "company", "admin"] },
 });
 
-/**
- * Utility: costo totale per azione * quantità
- */
+/** Alias backward-compat (checklist indicava sponsorshipChain) */
+export const sponsorshipChain = SPONSORSHIP;
+
+/** Seed iniziali configurabili */
+export const ADMIN_INITIAL_CREDITS = 1000;
+export const COMPANY_DEFAULT_CREDITS = 100;
+
+/** Soglia “low balance” di default (opzionale) */
+export const LOW_BALANCE_THRESHOLD = 10;
+
+/** Utility costo totale */
 export function getActionCost(action: CreditAction, qty = 1): number {
   const unit = PRICE_TABLE[action] ?? 0;
   const n = Number.isInteger(qty) && qty > 0 ? qty : 1;

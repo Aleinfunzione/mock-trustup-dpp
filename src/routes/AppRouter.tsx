@@ -1,3 +1,4 @@
+// src/AppRouter.tsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ROUTES } from "@/utils/constants";
 
@@ -8,7 +9,6 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 // Dashboards
 import AdminDashboard from "@/pages/dashboards/AdminDashboard";
 import CompanyDashboard from "@/pages/dashboards/CompanyDashboard";
-import CompanyTeamPage from "@/pages/company/CompanyTeamPage";
 import CreatorDashboard from "@/pages/dashboards/CreatorDashboard";
 import OperatorDashboard from "@/pages/dashboards/OperatorDashboard";
 import MachineDashboard from "@/pages/dashboards/MachineDashboard";
@@ -16,9 +16,13 @@ import MachineDashboard from "@/pages/dashboards/MachineDashboard";
 // Company
 import CompanyEventsPage from "@/pages/events/CompanyEventsPage";
 import CompanyAttributesPage from "@/pages/company/CompanyAttributesPage";
-import CompanyIslandsPage from "@/pages/company/CompanyIslandsPage";
 import CompanyCompliancePage from "@/pages/company/CompanyCompliancePage";
-import OrganizationCredentialPage from "@/pages/company/OrganizationCredentialPage"; // NEW
+import OrganizationCredentialPage from "@/pages/company/OrganizationCredentialPage";
+import CompanyCreditsPage from "@/pages/company/CompanyCreditsPage";
+import CompanyOrganizationPage from "@/pages/company/CompanyOrganizationPage"; // NEW
+
+// Admin
+import AdminCreditsPage from "@/pages/admin/AdminCreditsPage";
 
 // Creator
 import CreatorEventsPage from "@/pages/events/CreatorEventsPage";
@@ -33,7 +37,7 @@ import ProductCredentialsPage from "@/pages/products/ProductCredentialsPage";
 import DPPViewerPage from "@/pages/products/DPPViewerPage";
 
 // Viewer VP
-import VPViewerPage from "@/pages/viewer/VPViewerPage"; // NEW
+import VPViewerPage from "@/pages/viewer/VPViewerPage";
 
 export default function AppRouter() {
   return (
@@ -53,6 +57,14 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
+          <Route
+            path="/admin/credits"
+            element={
+              <RequireRole role="admin">
+                <AdminCreditsPage />
+              </RequireRole>
+            }
+          />
 
           {/* Company */}
           <Route
@@ -60,14 +72,6 @@ export default function AppRouter() {
             element={
               <RequireRole role="company">
                 <CompanyDashboard />
-              </RequireRole>
-            }
-          />
-          <Route
-            path={ROUTES.companyTeam}
-            element={
-              <RequireRole role="company">
-                <CompanyTeamPage />
               </RequireRole>
             }
           />
@@ -88,14 +92,6 @@ export default function AppRouter() {
             }
           />
           <Route
-            path="/company/islands"
-            element={
-              <RequireRole role="company">
-                <CompanyIslandsPage />
-              </RequireRole>
-            }
-          />
-          <Route
             path="/company/compliance"
             element={
               <RequireRole role="company">
@@ -103,7 +99,20 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* NEW: gestione VC organizzazione */}
+          {/* Organizzazione: Team + Isole */}
+          <Route
+            path="/company/org"
+            element={
+              <RequireRole role="company">
+                <CompanyOrganizationPage />
+              </RequireRole>
+            }
+          />
+          {/* Redirect legacy */}
+          <Route path="/company/team" element={<Navigate to="/company/org?tab=team" replace />} />
+          <Route path="/company/islands" element={<Navigate to="/company/org?tab=islands" replace />} />
+
+          {/* Credenziali org */}
           <Route
             path="/company/credentials"
             element={
@@ -112,6 +121,16 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
+          {/* Crediti azienda */}
+          <Route
+            path="/company/credits"
+            element={
+              <RequireRole role="company">
+                <CompanyCreditsPage />
+              </RequireRole>
+            }
+          />
+
           <Route
             path="/company/products"
             element={
@@ -211,7 +230,7 @@ export default function AppRouter() {
             }
           />
 
-          {/* VP Viewer (protetto, accesso company) */}
+          {/* VP Viewer (protetto) */}
           <Route
             path="/viewer/:vpId"
             element={

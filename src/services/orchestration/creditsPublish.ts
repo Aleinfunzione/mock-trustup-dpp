@@ -24,32 +24,44 @@ export class CreditError extends Error {
   }
 }
 
+function mapReasonToCode(reason: unknown): CreditError["code"] {
+  const r = String(reason ?? "").toUpperCase();
+  if (r.includes("INSUFFICIENT")) return "INSUFFICIENT_CREDITS";
+  if (r.includes("CHAIN_BLOCKED") || r.includes("CHAIN")) return "CHAIN_BLOCKED";
+  if (r.includes("POLICY")) return "POLICY_DENY";
+  return "UNKNOWN";
+}
+
 function normalize(err: unknown): CreditError {
   const e = err as any;
-  const msg = (e?.code || e?.message || "").toString().toUpperCase();
+  const msg = (e?.code || e?.message || e?.reason || "").toString().toUpperCase();
   if (msg.includes("INSUFFICIENT")) return new CreditError("INSUFFICIENT_CREDITS", "Crediti insufficienti", e);
-  if (msg.includes("CHAIN_BLOCKED")) return new CreditError("CHAIN_BLOCKED", "Catena pagatore bloccata", e);
+  if (msg.includes("CHAIN_BLOCKED") || msg.includes("CHAIN")) return new CreditError("CHAIN_BLOCKED", "Catena pagatore bloccata", e);
   if (msg.includes("POLICY")) return new CreditError("POLICY_DENY", "Policy crediti nega l’azione", e);
   return new CreditError("UNKNOWN", "Errore crediti", e);
 }
 
-export function costOf(action: ActionCode): number {
-  return PRICE_TABLE[action] ?? 0;
+function safeQty(qty?: number) {
+  return Number.isInteger(qty) && (qty as number) > 0 ? (qty as number) : 1;
 }
 
-export async function simulate(action: ActionCode, actor: ConsumeActor): Promise<void> {
+export function costOf(action: ActionCode, qty = 1): number {
+  const unit = PRICE_TABLE[action] ?? 0;
+  return unit * safeQty(qty);
+}
+
+export async function simulate(action: ActionCode, actor: ConsumeActor, qty = 1): Promise<void> {
   try {
     const _simulate: any = simulateCost as any;
-    // Supporta sia firma ad oggetto che posizionale lato API.
-    await _simulate({ action, ...actor });
+    await _simulate({ action, ...actor, qty: safeQty(qty) });
   } catch (e) {
     throw normalize(e);
   }
 }
 
-export async function canAfford(action: ActionCode, actor: ConsumeActor): Promise<boolean> {
+export async function canAfford(action: ActionCode, actor: ConsumeActor, qty = 1): Promise<boolean> {
   try {
-    await simulate(action, actor);
+    await simulate(action, actor, qty);
     return true;
   } catch {
     return false;
@@ -59,14 +71,15 @@ export async function canAfford(action: ActionCode, actor: ConsumeActor): Promis
 export async function consume(
   action: ActionCode,
   actor: ConsumeActor,
-  meta?: Record<string, unknown>
+  meta?: Record<string, unknown>,
+  qty = 1
 ): Promise<{ ok: true; tx?: any; payerAccountId?: string } | never> {
   try {
     const _consume: any = consumeForAction as any;
-    const res = await _consume(action, actor, meta);
+    const res = await _consume(action, actor, meta, safeQty(qty));
     if (res?.ok === false) {
-      const reason = String(res?.reason ?? "UNKNOWN");
-      throw new CreditError("INSUFFICIENT_CREDITS", reason, res);
+      const code = mapReasonToCode(res?.reason);
+      throw new CreditError(code, String(res?.reason ?? "Errore consumo"), res);
     }
     return res;
   } catch (e) {

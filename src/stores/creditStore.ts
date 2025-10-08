@@ -1,5 +1,5 @@
 // src/stores/creditStore.ts
-import { PRICE_TABLE, SPONSORSHIP, getActionCost } from "@/config/creditPolicy";
+import { PRICE_TABLE, SPONSORSHIP, getActionCost, ADMIN_INITIAL_CREDITS, COMPANY_DEFAULT_CREDITS, LOW_BALANCE_THRESHOLD } from "@/config/creditPolicy";
 import type {
   AccountOwnerType,
   CreditAction,
@@ -21,7 +21,7 @@ const KEYS = {
   META: (STORAGE_KEYS as any)?.CREDITS_META ?? "trustup:credits:meta",
 };
 
-// Wrapper locali robusti
+// ---------- storage utils ----------
 function readJSON<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -37,19 +37,10 @@ function writeJSON(key: string, value: unknown) {
     // no-op
   }
 }
-
 function nowISO() { return new Date().toISOString(); }
-
-function loadAccounts(): AccountsIndex {
-  return readJSON<AccountsIndex>(KEYS.ACCOUNTS, {});
-}
-function loadTx(): CreditTx[] {
-  return readJSON<CreditTx[]>(KEYS.TX, []);
-}
-function loadMeta(): Meta {
-  return readJSON<Meta>(KEYS.META, { version: 0, counter: 0 });
-}
-
+function loadAccounts(): AccountsIndex { return readJSON<AccountsIndex>(KEYS.ACCOUNTS, {}); }
+function loadTx(): CreditTx[] { return readJSON<CreditTx[]>(KEYS.TX, []); }
+function loadMeta(): Meta { return readJSON<Meta>(KEYS.META, { version: 0, counter: 0 }); }
 function saveAll(nextAccounts: AccountsIndex, nextTx: CreditTx[], prevMeta?: Meta) {
   const meta = loadMeta();
   if (prevMeta && meta.version !== prevMeta.version) return false;
@@ -59,26 +50,95 @@ function saveAll(nextAccounts: AccountsIndex, nextTx: CreditTx[], prevMeta?: Met
   writeJSON(KEYS.META, nextMeta);
   return true;
 }
-
 function bumpCounter(): number {
   const meta = loadMeta();
   const next: Meta = { version: meta.version, counter: meta.counter + 1 };
   writeJSON(KEYS.META, next);
   return next.counter;
 }
-
 function txId(prefix = "tx"): string { return `${prefix}_${Date.now()}_${bumpCounter()}`; }
 
+// ---------- identity helpers ----------
 export function getAccountId(ownerType: AccountOwnerType, ownerId: string): string {
   return `acc:${ownerType}:${ownerId}`;
 }
-
 function getAdminAccountId(): string | undefined {
   const accounts = loadAccounts();
   const admin = Object.values(accounts).find((a) => a.ownerType === "admin");
   return admin?.id;
 }
+function mustAccount(id: string): CreditAccount {
+  const acc = loadAccounts()[id];
+  if (!acc) throw new Error(`Account non trovato: ${id}`);
+  return acc;
+}
 
+// ---------- bootstrap / ensure ----------
+/** Inizializza ledger: crea admin e opzionalmente company/members se mancanti. Idempotente. */
+export function initCredits(ctx: {
+  adminId: string;
+  companyId?: string;
+  members?: { type: AccountOwnerType; id: string }[];
+  adminSeed?: number;              // override opzionale
+  companyDefault?: number;         // override opzionale
+  defaultThreshold?: number;       // override opzionale
+}): { created: string[] } {
+  const accounts = loadAccounts();
+  const tx = loadTx();
+  const prevMeta = loadMeta();
+  const created: string[] = [];
+
+  const seed = Number.isInteger(ctx.adminSeed) ? (ctx.adminSeed as number) : ADMIN_INITIAL_CREDITS;
+  const companyInit = Number.isInteger(ctx.companyDefault) ? (ctx.companyDefault as number) : COMPANY_DEFAULT_CREDITS;
+  const threshold = Number.isInteger(ctx.defaultThreshold) ? (ctx.defaultThreshold as number) : LOW_BALANCE_THRESHOLD;
+
+  const ensureOne = (ownerType: AccountOwnerType, ownerId: string, initialBalance = 0) => {
+    const id = getAccountId(ownerType, ownerId);
+    if (!accounts[id]) {
+      accounts[id] = {
+        id, ownerType, ownerId,
+        balance: initialBalance,
+        lowBalanceThreshold: threshold,
+        updatedAt: nowISO(),
+      };
+      created.push(id);
+    }
+  };
+
+  // admin
+  ensureOne("admin", ctx.adminId, seed);
+  // company
+  if (ctx.companyId) ensureOne("company", ctx.companyId, companyInit);
+  // members
+  (ctx.members ?? []).forEach(m => ensureOne(m.type, m.id, 0));
+
+  const ok = saveAll(accounts, tx, prevMeta);
+  if (!ok) {
+    // Ritenta senza check di version se qualcuno ha scritto nel frattempo
+    saveAll(accounts, tx);
+  }
+  return { created };
+}
+
+/** Crea account company se mancante. Non tocca bilancio se già esiste. */
+export function ensureCompanyAccount(companyId: string, initialBalance = COMPANY_DEFAULT_CREDITS, threshold = LOW_BALANCE_THRESHOLD) {
+  const accounts = loadAccounts();
+  const tx = loadTx();
+  const prevMeta = loadMeta();
+  const id = getAccountId("company", companyId);
+  if (!accounts[id]) {
+    accounts[id] = {
+      id, ownerType: "company", ownerId: companyId,
+      balance: initialBalance,
+      lowBalanceThreshold: threshold,
+      updatedAt: nowISO(),
+    };
+    const ok = saveAll(accounts, tx, prevMeta);
+    if (!ok) saveAll(accounts, tx);
+  }
+}
+
+/** API legacy: crea più account se mancanti (senza seed dedicati). */
 export function ensureAccounts(seed: {
   adminId: string;
   companyIds: string[];
@@ -91,30 +151,47 @@ export function ensureAccounts(seed: {
 
   const { adminId, companyIds, memberIds, defaults } = seed;
   const defBalance = defaults?.balance ?? 0;
-  const defThreshold = defaults?.threshold ?? 0;
+  const defThreshold = defaults?.threshold ?? LOW_BALANCE_THRESHOLD;
 
-  const addIfMissing = (ownerType: AccountOwnerType, ownerId: string) => {
+  const addIfMissing = (ownerType: AccountOwnerType, ownerId: string, initial = defBalance) => {
     const id = getAccountId(ownerType, ownerId);
     if (!accounts[id]) {
       accounts[id] = {
         id, ownerType, ownerId,
-        balance: defBalance,
+        balance: initial,
         lowBalanceThreshold: defThreshold,
         updatedAt: nowISO(),
       };
     }
   };
 
-  addIfMissing("admin", adminId);
-  companyIds.forEach((cid) => addIfMissing("company", cid));
-  memberIds.forEach(({ type, id }) => addIfMissing(type, id));
+  addIfMissing("admin", adminId, defBalance);
+  companyIds.forEach((cid) => addIfMissing("company", cid, defBalance));
+  memberIds.forEach(({ type, id }) => addIfMissing(type, id, defBalance));
 
   saveAll(accounts, tx, meta);
 }
 
+// ---------- reads ----------
 export function getBalance(accountId: string): number {
   const acc = loadAccounts()[accountId];
   return acc?.balance ?? 0;
+}
+
+/** Ritorna bilanci per id con flag low. */
+export function getBalancesByIds(ids: string[]): Array<{ id: string; balance: number; low: boolean }> {
+  const accs = loadAccounts();
+  return ids.map((id) => {
+    const a = accs[id];
+    const bal = a?.balance ?? 0;
+    const thr = a?.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD;
+    return { id, balance: bal, low: bal <= thr };
+  });
+}
+
+/** Lista transazioni, opzionale filtro account e limit. */
+export function listTransactions(params?: { accountId?: string; limit?: number }): CreditTx[] {
+  return history(params);
 }
 
 export function history(params?: { accountId?: string; limit?: number }): CreditTx[] {
@@ -127,12 +204,14 @@ export function history(params?: { accountId?: string; limit?: number }): Credit
   return list;
 }
 
-function mustAccount(id: string): CreditAccount {
-  const acc = loadAccounts()[id];
-  if (!acc) throw new Error(`Account non trovato: ${id}`);
-  return acc;
+export function isLowBalance(accountId: string): boolean {
+  const acc = loadAccounts()[accountId];
+  if (!acc) return false;
+  const thr = acc.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD;
+  return acc.balance <= thr;
 }
 
+// ---------- writes ----------
 function persistAccountsAndTx(nextAccounts: AccountsIndex, appendedTx: CreditTx[], prevMeta: Meta, retries = 2) {
   const nextTx = [...loadTx(), ...appendedTx];
   for (let i = 0; i <= retries; i++) {
@@ -179,6 +258,19 @@ export function transfer(fromAccountId: string, toAccountId: string, amount: num
   return tx;
 }
 
+export function setLowBalanceThreshold(accountId: string, threshold: number) {
+  if (!Number.isInteger(threshold) || threshold < 0) throw new Error("threshold deve essere intero >= 0");
+  const prevMeta = loadMeta();
+  const accounts = { ...loadAccounts() };
+  const acc = mustAccount(accountId);
+  accounts[accountId] = { ...acc, lowBalanceThreshold: threshold, updatedAt: nowISO() };
+  const ok = persistAccountsAndTx(accounts, [], prevMeta);
+  if (!ok) throw new Error("Race condition nel salvataggio threshold");
+}
+/** Alias ergonomico */
+export const setThreshold = setLowBalanceThreshold;
+
+// ---------- simulate / consume ----------
 function resolvePayer(
   action: CreditAction,
   actor: ConsumeActor,
@@ -255,23 +347,7 @@ export function consume(
   return result;
 }
 
-export function setLowBalanceThreshold(accountId: string, threshold: number) {
-  if (!Number.isInteger(threshold) || threshold < 0) throw new Error("threshold deve essere intero >= 0");
-  const prevMeta = loadMeta();
-  const accounts = { ...loadAccounts() };
-  const acc = mustAccount(accountId);
-  accounts[accountId] = { ...acc, lowBalanceThreshold: threshold, updatedAt: nowISO() };
-  const ok = persistAccountsAndTx(accounts, [], prevMeta);
-  if (!ok) throw new Error("Race condition nel salvataggio threshold");
-}
-
-export function isLowBalance(accountId: string): boolean {
-  const acc = loadAccounts()[accountId];
-  if (!acc) return false;
-  const thr = acc.lowBalanceThreshold ?? 0;
-  return acc.balance <= thr;
-}
-
+// ---------- maintenance ----------
 export function __resetAll() {
   writeJSON(KEYS.ACCOUNTS, {});
   writeJSON(KEYS.TX, []);

@@ -4,15 +4,19 @@ import { useAuth } from "@/hooks/useAuth";
 
 type NavItem = { to: string; label: string };
 const NAV: Record<string, NavItem[]> = {
-  admin: [{ to: "/admin", label: "Dashboard" }],
+  admin: [
+    { to: "/admin", label: "Dashboard" },
+    { to: "/admin/credits", label: "Crediti" }, // NEW
+  ],
   company: [
     { to: "/company", label: "Dashboard" },
     { to: "/company/products", label: "Prodotti" },
     { to: "/company/events", label: "Eventi" },
-    { to: "/company/islands", label: "Isole" },
+    { to: "/company/org", label: "Organizzazione" }, // NEW (Team+Isole)
     { to: "/company/attributes", label: "Attributi azienda" },
-    { to: "/company/compliance", label: "Compliance" },        // NEW
-    { to: "/company/credentials", label: "Credenziali org" },  // NEW
+    { to: "/company/compliance", label: "Compliance" },
+    { to: "/company/credentials", label: "Credenziali org" },
+    { to: "/company/credits", label: "Crediti" }, // NEW
   ],
   creator: [
     { to: "/creator", label: "Dashboard" },

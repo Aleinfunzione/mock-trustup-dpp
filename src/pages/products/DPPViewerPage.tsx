@@ -11,8 +11,9 @@ import { useCredentialStore } from "@/stores/credentialStore";
 import { getProductById } from "@/services/api/products";
 
 import { useAuth } from "@/hooks/useAuth";
-import { consumeForAction } from "@/services/api/credits";
+import { consumeForAction, simulateCost } from "@/services/api/credits";
 import type { AccountOwnerType } from "@/types/credit";
+import { costOf } from "@/services/orchestration/creditsPublish";
 
 type Snapshot =
   | {
@@ -38,6 +39,9 @@ export default function DPPViewerPage() {
   const [snapshot, setSnapshot] = React.useState<Snapshot>(null);
   const [loading, setLoading] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
+
+  const [canPay, setCanPay] = React.useState(true);
+  const vpCost = costOf("VP_PUBLISH" as any);
 
   const { org, prod, load } = useCredentialStore();
   const { currentUser } = useAuth();
@@ -96,6 +100,30 @@ export default function DPPViewerPage() {
     loadAll();
   }, [loadAll]);
 
+  // pre-gating crediti
+  React.useEffect(() => {
+    let alive = true;
+    async function checkCredits() {
+      try {
+        const u = currentUser as any;
+        const actor = {
+          ownerType: (currentUser?.role ?? "company") as AccountOwnerType,
+          ownerId: (u?.id ?? u?.did) as string,
+          companyId: (u?.companyId ?? u?.companyDid) as string | undefined,
+        };
+        await Promise.resolve(
+          // supporta API sia posizionale sia a oggetto
+          (simulateCost as any)({ action: "VP_PUBLISH", ...actor })
+        );
+        if (alive) setCanPay(true);
+      } catch {
+        if (alive) setCanPay(false);
+      }
+    }
+    checkCredits();
+    return () => { alive = false; };
+  }, [currentUser?.did, currentUser?.companyDid, currentUser?.role]);
+
   async function onReprepare() {
     await loadAll();
   }
@@ -125,7 +153,7 @@ export default function DPPViewerPage() {
       const debit = consumeForAction("VP_PUBLISH", actor, { kind: "vp", id: productId });
       if (isErr(debit)) {
         const reason = String(debit.reason ?? "UNKNOWN");
-        if (reason === "INSUFFICIENT_FUNDS") throw new Error("Crediti insufficienti per pubblicare la VP");
+        if (reason.includes("INSUFFICIENT")) throw new Error("Crediti insufficienti per pubblicare la VP");
         throw new Error(`Errore crediti: ${reason}`);
       }
 
@@ -224,7 +252,7 @@ export default function DPPViewerPage() {
             <div className="text-sm text-muted-foreground">Nessun dato disponibile.</div>
           )}
 
-          <div className="flex gap-2 pt-1">
+          <div className="flex gap-2 pt-1 items-center flex-wrap">
             <Button variant="outline" asChild>
               <Link to="..">Indietro</Link>
             </Button>
@@ -233,9 +261,13 @@ export default function DPPViewerPage() {
                 <Button variant="secondary" onClick={onReprepare} disabled={loading}>
                   Ricalcola VP
                 </Button>
-                <Button onClick={onPublish} disabled={loading || (report && !report.ok)}>
+                <Button onClick={onPublish} disabled={loading || (report && !report.ok) || !canPay}>
                   Pubblica VP
                 </Button>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  Costo pubblicazione: <span className="font-mono">{vpCost}</span> crediti
+                  {!canPay && <span className="text-destructive ml-2">• crediti insufficienti</span>}
+                </span>
               </>
             )}
           </div>
