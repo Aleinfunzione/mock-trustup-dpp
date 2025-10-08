@@ -14,16 +14,17 @@ import { useProducts } from "@/hooks/useProducts";
 import { useAuthStore } from "@/stores/authStore";
 import { EVENT_TYPES } from "@/utils/constants";
 import type { Product, BomNode } from "@/types/product";
-import {
-  getProduct as getProductSvc,
-  listProductsByCompany,
-} from "@/services/api/products";
+import { getProduct as getProductSvc, listProductsByCompany } from "@/services/api/products";
 
-// ---- identity (fallback robusto ai vari nomi funzione/campo)
+// identity fallback
 import * as IdentityApi from "@/services/api/identity";
 
-// ---- crediti
+// crediti orchestrati
 import { canAfford, consume, costOf } from "@/services/orchestration/creditsPublish";
+import type { AccountOwnerType, ConsumeActor } from "@/types/credit";
+
+// org: assegnazioni a isole
+import { listAssignments } from "@/stores/orgStore";
 
 type EventFormProps = {
   defaultProductId?: string;
@@ -116,6 +117,7 @@ export default function EventForm({
   // prodotto / lista prodotti
   const [productId, setProductId] = useState<string>(defaultProductId ?? "");
   const [products, setProducts] = useState<Product[]>([]);
+  const [productIslandId, setProductIslandId] = useState<string | undefined>(undefined);
 
   // evento
   const [eventType, setEventType] = useState<string>("");
@@ -143,12 +145,12 @@ export default function EventForm({
     listMineRef.current = listMine;
   }, [listMine]);
 
-  // prefill prodotto se arriva da props (non blocca la select)
+  // prefill prodotto se arriva da props
   useEffect(() => {
     if (defaultProductId) setProductId(defaultProductId);
   }, [defaultProductId]);
 
-  // carica prodotti: prima hook, poi fallback per company
+  // carica prodotti
   useEffect(() => {
     const load = async () => {
       let list: Product[] = [];
@@ -179,32 +181,41 @@ export default function EventForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [products, defaultProductId]);
 
-  // carica e flattenta BOM
+  // carica BOM + islandId prodotto
   useEffect(() => {
     if (!productId) {
       setBomOptions([]);
       setTargetNodeId("");
+      setProductIslandId(undefined);
       return;
     }
     const prod = getProductSvc(productId);
     const bom = (prod?.bom ?? []) as BomNode[];
     const opts = flattenBOM(bom);
     setBomOptions(opts);
+    setProductIslandId((prod as any)?.islandId);
     if (targetNodeId && !opts.find((o) => o.id === targetNodeId)) {
       setTargetNodeId("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId]);
 
-  // carica attori della stessa azienda
+  // carica attori e filtra per isola del prodotto se presente
   useEffect(() => {
     const companyDid = currentUser?.companyDid || currentUser?.did;
     if (!companyDid) return;
-    getCompanyActors(companyDid).then((all) => {
-      const filtered = all.filter((a) => isOperatorRole(a.role));
-      setActors(filtered);
-    });
-  }, [currentUser?.companyDid, currentUser?.did]);
+    (async () => {
+      const all = (await getCompanyActors(companyDid)).filter((a) => isOperatorRole(a.role));
+      if (productIslandId) {
+        const asg = listAssignments(companyDid);
+        const allowed = new Set(asg.filter(a => a.islandId === productIslandId).map(a => a.did));
+        const filtered = all.filter(a => allowed.has(a.did));
+        setActors(filtered.length ? filtered : all);
+      } else {
+        setActors(all);
+      }
+    })();
+  }, [currentUser?.companyDid, currentUser?.did, productIslandId]);
 
   // pre-gating crediti
   useEffect(() => {
@@ -212,10 +223,13 @@ export default function EventForm({
     async function checkCredits() {
       if (!currentUser?.did) return setCanPay(true);
       try {
-        const ok = await canAfford("EVENT_CREATE" as any, {
-          payer: currentUser.did,
-          company: currentUser.companyDid,
-        } as any);
+        const u = currentUser as any;
+        const actor: ConsumeActor = {
+          ownerType: (currentUser?.role ?? "company") as AccountOwnerType,
+          ownerId: (u?.id ?? u?.did) as string,
+          companyId: (u?.companyId ?? u?.companyDid) as string | undefined,
+        };
+        const ok = await canAfford("EVENT_CREATE" as any, actor);
         if (alive) setCanPay(ok);
       } catch {
         if (alive) setCanPay(false);
@@ -223,7 +237,7 @@ export default function EventForm({
     }
     checkCredits();
     return () => { alive = false; };
-  }, [currentUser?.did, currentUser?.companyDid]);
+  }, [currentUser?.did, currentUser?.companyDid, currentUser?.role]);
 
   const allowedTypes =
     Array.isArray(EVENT_TYPES) && EVENT_TYPES.length
@@ -262,32 +276,41 @@ export default function EventForm({
 
     setSubmitting(true);
     try {
-      // Gate crediti
-      const ok = await canAfford("EVENT_CREATE" as any, {
-        payer: currentUser.did,
-        company: currentUser.companyDid,
-      } as any);
+      const u = currentUser as any;
+      const actor: ConsumeActor = {
+        ownerType: (currentUser?.role ?? "company") as AccountOwnerType,
+        ownerId: (u?.id ?? u?.did) as string,
+        companyId: (u?.companyId ?? u?.companyDid) as string | undefined,
+      };
+
+      const ok = await canAfford("EVENT_CREATE" as any, actor);
       if (!ok) {
         setCanPay(false);
         throw Object.assign(new Error("Crediti insufficienti"), { code: "INSUFFICIENT_CREDITS" });
       }
 
-      // Consume prima della creazione evento
-      await consume("EVENT_CREATE" as any, {
-        payer: currentUser.did,
-        company: currentUser.companyDid,
-      } as any, {
-        kind: "event",
-        productId,
-        type: effectiveType,
-        scope,
-        nodeId: scope === "bom" ? targetNodeId : undefined,
-      });
-
       const targetMeta =
         scope === "bom"
           ? bomOptions.find((o) => o.id === targetNodeId) || null
           : null;
+
+      const assigned = assignedToDid || assignee || undefined;
+
+      await consume(
+        "EVENT_CREATE" as any,
+        actor,
+        {
+          kind: "event",
+          productId,
+          type: effectiveType,
+          scope,
+          nodeId: scope === "bom" ? targetNodeId : undefined,
+          targetPath: scope === "bom" ? targetMeta?.path : undefined,
+          targetLabel: scope === "bom" ? targetMeta?.label : undefined,
+          islandId: productIslandId,
+          assignedToDid: assigned,
+        }
+      );
 
       const evt = await createEvent({
         productId,
@@ -295,13 +318,14 @@ export default function EventForm({
         actorDid: currentUser.did,
         type: effectiveType,
         notes: notes.trim() || undefined,
-        assignedToDid: assignedToDid || assignee || undefined,
+        assignedToDid: assigned,
         ...( {
           data: {
             scope,
             targetNodeId: scope === "bom" ? targetNodeId : undefined,
             targetPath: scope === "bom" ? targetMeta?.path : undefined,
             targetLabel: scope === "bom" ? targetMeta?.label : undefined,
+            islandId: productIslandId,
           },
         } as any ),
       });
@@ -311,6 +335,7 @@ export default function EventForm({
         description:
           `#${evt.id} • ${effectiveType}` +
           (scope === "bom" && targetMeta?.label ? ` • BOM: ${targetMeta.label}` : "") +
+          (productIslandId ? ` • Isola: ${productIslandId}` : "") +
           ` • costo ${eventCost} crediti`,
       });
 
@@ -362,6 +387,11 @@ export default function EventForm({
                 )}
               </SelectContent>
             </Select>
+            {productIslandId && (
+              <p className="text-xs text-muted-foreground">
+                Isola prodotto: <span className="font-mono">{productIslandId}</span>
+              </p>
+            )}
           </div>
 
           {/* Tipo */}
@@ -435,7 +465,7 @@ export default function EventForm({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Puoi associare l’evento a un componente specifico (o gruppo) della BOM.
+                Puoi associare l’evento a un componente specifico o gruppo.
               </p>
             </div>
           )}
@@ -479,6 +509,11 @@ export default function EventForm({
                   )}
                 </SelectContent>
               </Select>
+              {productIslandId && (
+                <p className="text-xs text-muted-foreground">
+                  Filtrato per isola: <span className="font-mono">{productIslandId}</span>
+                </p>
+              )}
             </div>
           )}
 

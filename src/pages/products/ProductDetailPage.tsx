@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 
 import EventTimeline from "@/components/events/EventTimeline";
 import EventForm from "@/components/events/EventForm";
@@ -14,6 +15,7 @@ import { useProducts } from "@/hooks/useProducts";
 import { useAuthStore } from "@/stores/authStore";
 import { getActor } from "@/services/api/identity";
 import { getProductById, listProductsByCompany } from "@/services/api/products";
+import { getIsland } from "@/stores/orgStore";
 
 import type { BomNode } from "@/types/product";
 import type { Product } from "@/types/product";
@@ -25,7 +27,6 @@ export default function ProductDetailPage() {
   const { listMine } = useProducts();
   const { currentUser } = useAuthStore();
 
-  // basePath per “torna alla lista” + link azioni
   const role = currentUser?.role;
   const roleBase = role === "company" ? "/company" : role === "creator" ? "/creator" : "";
   const basePath =
@@ -33,18 +34,15 @@ export default function ProductDetailPage() {
     role === "creator" ? "/creator/products" :
     "/products";
 
-  // companyDid robusto
   const actor = currentUser?.did ? getActor(currentUser.did) : undefined;
   const companyDid = currentUser?.companyDid ?? actor?.companyDid;
 
-  // stato locale
   const [product, setProduct] = React.useState<Product | null>(null);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [assigneeDid, setAssigneeDid] = React.useState("");
   const [timelineKey, setTimelineKey] = React.useState(0);
   const [bomLocal, setBomLocal] = React.useState<BomNode[]>([]);
 
-  // lookup “tollerante”
   React.useEffect(() => {
     let mounted = true;
 
@@ -52,32 +50,21 @@ export default function ProductDetailPage() {
       if (!id) return;
       setLoading(true);
 
-      // 1) lista personale (comportamento originale)
       let p: Product | undefined;
       try {
         const mine = typeof listMine === "function" ? listMine() : [];
         p = mine?.find((x: any) => x?.id === id);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
 
-      // 2) direct by id (localStorage / mock)
       if (!p) {
-        try {
-          p = getProductById(id) as Product | undefined;
-        } catch {
-          /* ignore */
-        }
+        try { p = getProductById(id) as Product | undefined; } catch {}
       }
 
-      // 3) fallback: lista per azienda
       if (!p && companyDid) {
         try {
           const list = listProductsByCompany(companyDid);
           p = list.find((x: any) => x?.id === id);
-        } catch {
-          /* ignore */
-        }
+        } catch {}
       }
 
       if (mounted) {
@@ -88,9 +75,7 @@ export default function ProductDetailPage() {
     }
 
     load();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, companyDid]);
 
@@ -131,12 +116,8 @@ export default function ProductDetailPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
-          <Button variant="secondary" onClick={() => navigate(-1)}>
-            Torna indietro
-          </Button>
-          <Button asChild variant="outline">
-            <Link to={basePath}>Vai alla lista</Link>
-          </Button>
+          <Button variant="secondary" onClick={() => navigate(-1)}>Torna indietro</Button>
+          <Button asChild variant="outline"><Link to={basePath}>Vai alla lista</Link></Button>
         </CardContent>
       </Card>
     );
@@ -151,11 +132,16 @@ export default function ProductDetailPage() {
       "—") as string;
 
   const attributesHref = roleBase ? `${roleBase}/products/${id}/attributes` : undefined;
-  const credentialsHref = roleBase ? `${roleBase}/products/${id}/credentials` : undefined; // NEW
+  const credentialsHref = roleBase ? `${roleBase}/products/${id}/credentials` : undefined;
   const dppHref = roleBase ? `${roleBase}/products/${id}/dpp` : undefined;
 
   const isPublished = !!prodAny.isPublished;
   const dppId = prodAny.dppId as string | undefined;
+
+  const islandId: string | undefined = prodAny.islandId;
+  const islandName =
+    islandId && companyDid ? (getIsland(companyDid, islandId)?.name ?? islandId) : undefined;
+
   const publishedBadge = isPublished ? (
     <span className="ml-2 inline-flex items-center rounded bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 text-xs">
       Pubblicato
@@ -172,9 +158,10 @@ export default function ProductDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span className="flex items-center">
+            <span className="flex items-center gap-2">
               <span>{prodAny.name ?? "Prodotto"}</span>
               {publishedBadge}
+              {islandName && <Badge variant="secondary">Isola: {islandName}</Badge>}
             </span>
             <span className="text-sm font-normal text-muted-foreground font-mono">
               {prodAny.id}
@@ -189,14 +176,14 @@ export default function ProductDetailPage() {
             Azienda: {prodAny.companyDid ?? currentUser?.companyDid ?? "—"}
           </div>
 
-          {/* Azioni rapide su caratteristiche, credenziali e DPP */}
+          {/* Azioni rapide */}
           <div className="mt-2 flex flex-wrap gap-2">
             {attributesHref && (
               <Button asChild variant="outline" size="sm">
                 <Link to={attributesHref}>Caratteristiche</Link>
               </Button>
             )}
-            {credentialsHref && ( // NEW
+            {credentialsHref && (
               <Button asChild variant="outline" size="sm">
                 <Link to={credentialsHref}>Credenziali</Link>
               </Button>
@@ -219,7 +206,7 @@ export default function ProductDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>Registra evento</CardTitle>
-        </CardHeader>
+      </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="assignee">Assegna a DID (opzionale)</Label>
@@ -242,7 +229,7 @@ export default function ProductDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Distinta base (BOM) con persistenza e trigger bom.updated */}
+      {/* Distinta base (BOM) */}
       <Card>
         <CardHeader>
           <CardTitle>Distinta base (BOM)</CardTitle>
@@ -254,13 +241,13 @@ export default function ProductDetailPage() {
             productId={prodAny.id}
             onSaved={(next) => {
               setBomLocal(next);
-              setTimelineKey((k) => k + 1); // refresh timeline dopo salvataggio
+              setTimelineKey((k) => k + 1);
             }}
           />
         </CardContent>
       </Card>
 
-      {/* Timeline eventi del prodotto */}
+      {/* Timeline eventi */}
       <EventTimeline key={timelineKey} productId={prodAny.id} />
     </div>
   );

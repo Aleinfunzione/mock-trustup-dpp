@@ -1,4 +1,4 @@
-// src/services/api/credits.ts (patch: tipo ref con id obbligatorio)
+// src/services/api/credits.ts
 import {
   getAccountId,
   getBalance,
@@ -13,6 +13,7 @@ import {
   transfer,
   isLowBalance,
   setLowBalanceThreshold,
+  listAccounts as storeListAccounts,
 } from "@/stores/creditStore";
 import type {
   AccountOwnerType,
@@ -58,7 +59,15 @@ export function getBalances(accountIds: string[]) {
 export function simulateCost(
   actionOrParams:
     | CreditAction
-    | { action: CreditAction; payer?: string; company?: string; ownerType?: AccountOwnerType; ownerId?: string; companyId?: string; qty?: number },
+    | {
+        action: CreditAction;
+        payer?: string;
+        company?: string;
+        ownerType?: AccountOwnerType;
+        ownerId?: string;
+        companyId?: string;
+        qty?: number;
+      },
   maybeActor?: ConsumeActor,
   maybeQty = 1
 ) {
@@ -93,7 +102,6 @@ function isErr(res: _ConsumeResult): res is Extract<_ConsumeResult, { ok: false 
   return res.ok === false;
 }
 
-// >>> fix qui: id obbligatorio
 type ConsumeRef = { kind: string; id: string } & Record<string, any>;
 
 export function consumeForAction(
@@ -125,4 +133,9 @@ export function setThreshold(accountId: string, threshold: number) {
 
 export function accountId(ownerType: AccountOwnerType, ownerId: string) {
   return getAccountId(ownerType, ownerId);
+}
+
+/** Fallback: aziende presenti nel ledger crediti. */
+export function listCompanyAccounts(): Array<{ did: string }> {
+  return storeListAccounts({ ownerType: "company" }).map((a) => ({ did: a.ownerId }));
 }
