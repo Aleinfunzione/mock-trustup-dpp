@@ -6,6 +6,7 @@ import {
   ensureAccounts,
   initCredits as initStoreCredits,
   ensureCompanyAccount,
+  ensureMemberAccount as storeEnsureMemberAccount,
   simulate as storeSimulate,
   consume as storeConsume,
   history,
@@ -135,7 +136,17 @@ export function accountId(ownerType: AccountOwnerType, ownerId: string) {
   return getAccountId(ownerType, ownerId);
 }
 
-/** Fallback: aziende presenti nel ledger crediti. */
+/** Crea (se mancante) l’account del membro: creator/operator/machine/admin. */
+export function ensureMemberAccount(
+  ownerType: AccountOwnerType,
+  ownerId: string,
+  initialBalance = 0,
+  threshold?: number
+) {
+  return storeEnsureMemberAccount(ownerType, ownerId, initialBalance, threshold);
+}
+
+/** Fallback: aziende presenti nel ledger crediti (se Identity non risponde). */
 export function listCompanyAccounts(): Array<{ did: string }> {
   return storeListAccounts({ ownerType: "company" }).map((a) => ({ did: a.ownerId }));
 }

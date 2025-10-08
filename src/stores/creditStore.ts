@@ -161,6 +161,32 @@ export function ensureCompanyAccount(
   }
 }
 
+/** Crea account *membro* (creator/operator/machine/admin) se mancante. */
+export function ensureMemberAccount(
+  ownerType: AccountOwnerType,
+  ownerId: string,
+  initialBalance = 0,
+  threshold = LOW_BALANCE_THRESHOLD
+) {
+  const accounts = loadAccounts();
+  const tx = loadTx();
+  const prevMeta = loadMeta();
+  const id = getAccountId(ownerType, ownerId);
+  if (!accounts[id]) {
+    accounts[id] = {
+      id,
+      ownerType,
+      ownerId,
+      balance: initialBalance,
+      lowBalanceThreshold: threshold,
+      updatedAt: nowISO(),
+    };
+    const ok = saveAll(accounts, tx, prevMeta);
+    if (!ok) saveAll(accounts, tx);
+  }
+  return id;
+}
+
 /** API legacy: crea più account se mancanti (senza seed dedicati). */
 export function ensureAccounts(seed: {
   adminId: string;

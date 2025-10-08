@@ -13,6 +13,7 @@ import {
   listTransactions,
   transferBetween,
   setThreshold,
+  ensureMemberAccount,          // NEW
 } from "@/services/api/credits";
 import type { AccountOwnerType, CreditTx } from "@/types/credit";
 import CreditsBadge from "@/components/credit/CreditsBadge";
@@ -91,7 +92,6 @@ export default function CompanyCreditsPage() {
     if (!companyDid) return;
     loadCompanyActors(companyDid).then((list) => {
       setMembers(list);
-      // pre-seleziona primo valido
       if (list.length) {
         setMemberDid(list[0].did);
         setMemberType(roleToOwnerType(list[0].role));
@@ -125,6 +125,10 @@ export default function CompanyCreditsPage() {
     if (!companyAcc || !memberAcc || amount <= 0) return;
     setLoading(true);
     try {
+      // Assicura l'esistenza dell'account del membro (creator/operator/machine/admin)
+      await ensureMemberAccount(memberType, memberDid, 0);
+
+      // Esegue trasferimento
       transferBetween(companyAcc, memberAcc, Math.floor(amount), {
         reason: "company_to_member",
       });
