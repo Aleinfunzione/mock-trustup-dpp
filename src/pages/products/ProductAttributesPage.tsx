@@ -3,7 +3,7 @@ import * as React from "react";
 import { useParams, Link, useLocation } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import AttributesAndCredentialsTab from "@/components/products/AttributesAndCredentialsTab";
+import AttributesAndCredentialsTab from "@/pages/products/AttributesAndCredentialsTab";
 import { getProductById } from "@/services/api/products";
 
 const AttrTab = AttributesAndCredentialsTab as unknown as React.ComponentType<{ productId: string }>;

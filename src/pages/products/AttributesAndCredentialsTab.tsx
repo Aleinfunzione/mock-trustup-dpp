@@ -28,7 +28,6 @@ type ProductLike = {
 };
 
 function genId(): string {
-  // compat
   // @ts-ignore
   return (crypto?.randomUUID?.() as string) ?? Math.random().toString(16).slice(2);
 }
