@@ -1,3 +1,4 @@
+// src/components/products/ProductForm.tsx
 import { useEffect, useMemo, useState } from "react";
 import {
   Card,
@@ -9,12 +10,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 
 import { useAuth } from "@/hooks/useAuth";
 import { getActor } from "@/services/api/identity";
 import BOMEditor from "@/components/products/BOMEditor";
+import ProductAttributesForm from "@/components/products/ProductAttributesForm";
 
 import {
   createProduct,
@@ -44,7 +45,7 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
   // Campi base
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
-  const [attributesText, setAttributesText] = useState<string>("{}");
+  const [attributes, setAttributes] = useState<Record<string, any>>({});
   const [bom, setBom] = useState<BomNode[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,13 +54,12 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
   useEffect(() => {
     const t = listProductTypes(categoryId);
     setTypes(t);
-    // Se l'attuale typeId non è più valido, scegli il primo disponibile; altrimenti fallback a "generic"
     if (!t.find((x) => x.id === typeId)) {
       setTypeId(t[0]?.id ?? "generic");
     }
   }, [categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // All'avvio: bootstrap tipi (senza categoria => compat)
+  // All'avvio
   useEffect(() => {
     const t = listProductTypes(categoryId);
     setTypes(t);
@@ -82,15 +82,8 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
       if (!companyDid) throw new Error("Questo account non è associato ad alcuna azienda.");
       if (!currentUser?.did) throw new Error("Utente non autenticato.");
       if (!name.trim()) throw new Error("Inserisci il nome prodotto.");
-
-      // parse JSON attributes
-      let attrs: Record<string, any> = {};
-      if (attributesText && attributesText.trim().length > 0) {
-        try {
-          attrs = JSON.parse(attributesText);
-        } catch {
-          throw new Error("Gli attributi non sono un JSON valido.");
-        }
+      if (attributes === null || typeof attributes !== "object") {
+        throw new Error("Attributi non validi.");
       }
 
       const payload: CreateProductInput = {
@@ -98,8 +91,8 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
         createdByDid: currentUser.did,
         name: name.trim(),
         sku: sku.trim() || undefined,
-        typeId, // 🔴 vincolato al Tipo selezionato (filtrato per Categoria)
-        attributes: attrs,
+        typeId,
+        attributes,
         bom,
       };
 
@@ -109,9 +102,8 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
       // reset form
       setName("");
       setSku("");
-      setAttributesText("{}");
+      setAttributes({});
       setBom([]);
-      // mantieni la categoria selezionata; resetta solo il typeId coerentemente
       const t = listProductTypes(categoryId);
       setTypes(t);
       setTypeId(t[0]?.id ?? "generic");
@@ -127,7 +119,8 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
       <CardHeader>
         <CardTitle>Nuovo prodotto</CardTitle>
         <CardDescription>
-          Crea un prodotto con attributi (JSON) e distinta base (BOM). La validazione AJV avviene lato servizio mock.
+          Crea un prodotto con attributi guidati (JSON generato automaticamente) e distinta base (BOM).
+          La validazione AJV avviene lato servizio mock.
         </CardDescription>
       </CardHeader>
 
@@ -217,21 +210,12 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
               </div>
             </div>
 
-            {/* Attributi JSON */}
-            <div className="space-y-2">
-              <Label htmlFor="pf-attrs">Attributi (JSON)</Label>
-              <Textarea
-                id="pf-attrs"
-                value={attributesText}
-                onChange={(e) => setAttributesText(e.target.value)}
-                className="h-40 font-mono"
-                placeholder='{"color":"red","weight":123}'
-                disabled={saving}
-              />
-              <p className="text-xs text-muted-foreground">
-                Gli attributi saranno validati tramite AJV contro lo schema del tipo selezionato (mock).
-              </p>
-            </div>
+            {/* Attributi guidati + JSON avanzato */}
+            <ProductAttributesForm
+              typeId={typeId}
+              value={attributes}
+              onChange={setAttributes}
+            />
 
             {/* BOM */}
             <BOMEditor value={bom} onChange={setBom} />

@@ -6,30 +6,25 @@ import { Button } from "@/components/ui/button";
 import AttributesAndCredentialsTab from "@/components/products/AttributesAndCredentialsTab";
 import { getProductById } from "@/services/api/products";
 
-// Alias tipizzato locale
-const AttrTab = AttributesAndCredentialsTab as unknown as React.ComponentType<{
-  productId: string;
-}>;
+const AttrTab = AttributesAndCredentialsTab as unknown as React.ComponentType<{ productId: string }>;
 
 export default function ProductAttributesPage() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
 
-  // Company vs Creator
   const isCompany = location.pathname.startsWith("/company/");
   const baseListPath = isCompany ? "/company/products" : "/creator/products";
-  const baseDetailPath = baseListPath;
 
-  const [exists, setExists] = React.useState(false);
   const [name, setName] = React.useState<string>("");
+  const [exists, setExists] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     if (!id) return;
-    const p = getProductById(id);
-    if (p) {
-      setExists(true);
-      setName((p as any).name ?? id);
-    } else {
+    try {
+      const p = getProductById(id);
+      setExists(!!p);
+      setName((p as any)?.name ?? id);
+    } catch {
       setExists(false);
       setName("");
     }
@@ -38,14 +33,8 @@ export default function ProductAttributesPage() {
   if (!id) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>Prodotto non trovato</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Button asChild variant="outline">
-            <Link to={baseListPath}>Indietro</Link>
-          </Button>
-        </CardContent>
+        <CardHeader><CardTitle>Prodotto non specificato</CardTitle></CardHeader>
+        <CardContent><Button asChild variant="outline"><Link to={baseListPath}>Indietro</Link></Button></CardContent>
       </Card>
     );
   }
@@ -53,16 +42,10 @@ export default function ProductAttributesPage() {
   if (!exists) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>Prodotto non trovato</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>Prodotto non trovato</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Nessun prodotto con ID <code>{id}</code> nello storage locale.
-          </p>
-          <Button asChild variant="outline">
-            <Link to={baseListPath}>Indietro</Link>
-          </Button>
+          <p className="text-sm text-muted-foreground">Nessun prodotto con ID <code>{id}</code>.</p>
+          <Button asChild variant="outline"><Link to={baseListPath}>Indietro</Link></Button>
         </CardContent>
       </Card>
     );
@@ -71,15 +54,9 @@ export default function ProductAttributesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">
-          Caratteristiche &amp; Credenziali — {name}
-        </h1>
-        <Button asChild variant="outline">
-          <Link to={`${baseDetailPath}/${id}`}>Dettagli prodotto</Link>
-        </Button>
+        <h1 className="text-xl font-semibold">Caratteristiche &amp; Credenziali — {name}</h1>
+        <Button asChild variant="outline"><Link to={`${baseListPath}/${id}`}>Dettagli prodotto</Link></Button>
       </div>
-
-      {/* Tab: Catalogo → Pillole → Aggregato */}
       <AttrTab productId={id} />
     </div>
   );
