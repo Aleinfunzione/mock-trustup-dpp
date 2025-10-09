@@ -9,17 +9,14 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@
 import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/stores/authStore";
 
-// Islands + assignments store
-import {
-  listIslands,
-  listAssignments,
-  setMemberIsland,
-  type Island,
-  type MemberAssignment,
-} from "@/stores/orgStore";
+// Isole: stessa fonte dati della pagina "Isole"
+import { getCompanyAttrs, type Island } from "@/services/api/companyAttributes";
 
-// ---- identity (fallback robusto ai vari nomi funzione/campo)
-import * as IdentityApi from "@/services/api/identity";
+// Mapping membro↔isola
+import {
+  getMemberIsland,
+  setMemberIsland as setMemberIslandApi,
+} from "@/services/api/identity";
 
 type Actor = {
   did: string;
@@ -33,6 +30,8 @@ type Actor = {
   email?: string;
 };
 
+type MemberAssignment = { did: string; islandId?: string; group?: string };
+
 function actorLabel(a: Actor) {
   const nameCandidates = [
     a.displayName,
@@ -45,6 +44,10 @@ function actorLabel(a: Actor) {
   return nameCandidates.find((s) => s && s !== a.did) || "Membro";
 }
 
+const isOpOrMachine = (r?: string) => r === "operator" || r === "machine";
+
+// ---- identity members loader con fallback nomi funzione
+import * as IdentityApi from "@/services/api/identity";
 async function getCompanyMembers(companyDid: string): Promise<Actor[]> {
   const api: any = IdentityApi as any;
   const fn =
@@ -107,21 +110,25 @@ function AssignmentsSection() {
     if (!companyDid) return;
     setLoading(true);
     try {
-      const [m, isl, asg] = await Promise.all([
-        getCompanyMembers(companyDid),
-        Promise.resolve(listIslands(companyDid)),
-        Promise.resolve(listAssignments(companyDid)),
-      ]);
-      setMembers(m);
+      const m = await getCompanyMembers(companyDid);
+
+      // isole dalla stessa sorgente della pagina "Isole"
+      const attrs = getCompanyAttrs(companyDid);
+      const isl = Array.isArray(attrs?.islands) ? (attrs.islands as Island[]) : [];
       setIslands(isl);
+
+      // inizializza assignments leggendo il mapping per ogni membro
+      const onlyOpMach = m.filter((x) => isOpOrMachine(x.role));
       const idx: Record<string, MemberAssignment> = {};
-      for (const a of asg) idx[a.did] = a;
-      setAssign(idx);
       const d: Record<string, { islandId?: string; group?: string }> = {};
-      for (const mbr of m) {
-        const a = idx[mbr.did];
-        d[mbr.did] = { islandId: a?.islandId, group: a?.group };
+      for (const mem of onlyOpMach) {
+        const mi = getMemberIsland(mem.did);
+        idx[mem.did] = { did: mem.did, islandId: mi?.islandId, group: mi?.group };
+        d[mem.did] = { islandId: mi?.islandId, group: mi?.group };
       }
+
+      setMembers(onlyOpMach);
+      setAssign(idx);
       setDraft(d);
     } finally {
       setLoading(false);
@@ -162,8 +169,8 @@ function AssignmentsSection() {
     const d = draft[did] || {};
     try {
       setLoading(true);
-      const saved = setMemberIsland(companyDid, did, d.islandId ?? null, d.group);
-      setAssign((prev) => ({ ...prev, [did]: saved }));
+      const saved = setMemberIslandApi(did, d.islandId, d.group);
+      setAssign((prev) => ({ ...prev, [did]: { did, islandId: saved.islandId, group: saved.group } }));
       toast({ title: "Salvato", description: `${did} aggiornato` });
     } catch (e: any) {
       toast({ title: "Errore salvataggio", description: e?.message ?? "Impossibile salvare", variant: "destructive" });
@@ -179,7 +186,7 @@ function AssignmentsSection() {
       </CardHeader>
       <CardContent className="space-y-3">
         {members.length === 0 ? (
-          <div className="text-sm text-muted-foreground">Nessun membro trovato.</div>
+          <div className="text-sm text-muted-foreground">Nessun operatore o macchina.</div>
         ) : (
           <div className="space-y-2">
             <div className="grid grid-cols-12 gap-2 text-xs text-muted-foreground">
@@ -195,7 +202,9 @@ function AssignmentsSection() {
                 <div key={m.did} className="grid grid-cols-12 gap-2 items-center py-2 border-b last:border-0">
                   <div className="col-span-4">
                     <div className="font-medium">{actorLabel(m)}</div>
-                    <div className="text-xs text-muted-foreground font-mono">{m.did}</div>
+                    <div className="text-xs text-muted-foreground font-mono">
+                      {m.role} · {m.did}
+                    </div>
                   </div>
 
                   <div className="col-span-4">
@@ -203,6 +212,7 @@ function AssignmentsSection() {
                     <Select
                       value={d.islandId || ""}
                       onValueChange={(val) => onChangeIsland(m.did, val || undefined)}
+                      disabled={loading}
                     >
                       <SelectTrigger aria-label="Seleziona isola">
                         <SelectValue placeholder="Nessuna" />
@@ -226,6 +236,7 @@ function AssignmentsSection() {
                       placeholder="Es. Linea A / Turno 1"
                       value={d.group || ""}
                       onChange={(e) => onChangeGroup(m.did, e.target.value)}
+                      disabled={loading}
                     />
                   </div>
 

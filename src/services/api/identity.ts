@@ -4,6 +4,16 @@ import type { IdentityRegistry, IdentityRecord, Company, CompanyDetails } from "
 import type { Role } from "@/types/auth"
 import { deriveKeypairFromMnemonic, didFromPublicKey, generateMnemonic12 } from "@/services/crypto/did"
 
+/* ---------- nuovi tipi locali (scoped a questo file) ---------- */
+
+export type Island = { id: string; name: string; companyDid: string; group?: string }
+export type MemberIsland = { did: string; islandId?: string; group?: string }
+
+/* ---------- storage keys locali per isole/mapping (no nuovi file) ---------- */
+
+const KEY_ISLANDS = "identity.islands"
+const KEY_MEMBER_ISLANDS = "identity.memberIslands"
+
 /* ---------- helpers ---------- */
 
 function emptyRegistry(): IdentityRegistry {
@@ -48,6 +58,62 @@ export function saveRegistry(reg: IdentityRegistry): void {
   safeSet(STORAGE_KEYS.identityRegistry, normalized)
 }
 
+/* ---------- gestione isole (storage separato, compatibile con tipi esistenti) ---------- */
+
+function loadIslands(): Island[] {
+  return safeGet<Island[]>(KEY_ISLANDS, [])
+}
+function saveIslands(list: Island[]) {
+  safeSet(KEY_ISLANDS, list)
+}
+function loadMemberIslands(): MemberIsland[] {
+  return safeGet<MemberIsland[]>(KEY_MEMBER_ISLANDS, [])
+}
+function saveMemberIslands(list: MemberIsland[]) {
+  safeSet(KEY_MEMBER_ISLANDS, list)
+}
+
+/** Elenco isole dell'azienda */
+export function listIslands(companyDid: string): Island[] {
+  return loadIslands().filter(i => i.companyDid === companyDid)
+}
+
+/** Crea/Aggiorna isola */
+export function upsertIsland(input: Omit<Island, "id"> & Partial<Pick<Island, "id">>): Island {
+  const list = loadIslands()
+  const id = input.id ?? `isl_${randomHex(5)}`
+  const next: Island = { id, name: input.name, companyDid: input.companyDid, group: input.group }
+  const idx = list.findIndex(i => i.id === id)
+  if (idx >= 0) list[idx] = next
+  else list.push(next)
+  saveIslands(list)
+  return next
+}
+
+/** Elimina isola e sgancia i membri collegati */
+export function removeIsland(islandId: string) {
+  const list = loadIslands().filter(i => i.id !== islandId)
+  saveIslands(list)
+  const map = loadMemberIslands().map(m => (m.islandId === islandId ? { ...m, islandId: undefined } : m))
+  saveMemberIslands(map)
+}
+
+/** Mapping: leggi associazione membro↔isola */
+export function getMemberIsland(did: string): MemberIsland | undefined {
+  return loadMemberIslands().find(m => m.did === did)
+}
+
+/** Mapping: imposta associazione membro↔isola e gruppo opzionale */
+export function setMemberIsland(did: string, islandId?: string, group?: string): MemberIsland {
+  const map = loadMemberIslands()
+  const idx = map.findIndex(m => m.did === did)
+  const rec: MemberIsland = { did, islandId, group }
+  if (idx >= 0) map[idx] = rec
+  else map.push(rec)
+  saveMemberIslands(map)
+  return rec
+}
+
 /* ---------- companies ---------- */
 
 export type CompanyInput = {
@@ -71,6 +137,13 @@ export function deleteCompany(companyDid: string, opts?: { cascade?: boolean }) 
   const reg = getRegistry()
   if (!reg.companies[companyDid]) return
   delete reg.companies[companyDid]
+
+  // pulizia isole e mapping per quell'azienda
+  const isl = loadIslands().filter(i => i.companyDid !== companyDid)
+  saveIslands(isl)
+  const members = Object.values(reg.actors).filter(a => a.companyDid === companyDid).map(a => a.did)
+  const map = loadMemberIslands().map(m => (members.includes(m.did) ? { ...m, islandId: undefined } : m))
+  saveMemberIslands(map)
 
   if (opts?.cascade) {
     for (const did of Object.keys(reg.actors)) {
