@@ -1,196 +1,250 @@
+// src/pages/events/CompanyEventsPage.tsx
 import * as React from "react";
-import { Link } from "react-router-dom";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 
-import { useAuth } from "@/hooks/useAuth";
-import { getActor } from "@/services/api/identity";
+import { useAuthStore } from "@/stores/authStore";
 import { listProductsByCompany } from "@/services/api/products";
-
 import EventTimeline from "@/components/events/EventTimeline";
 
-type LiteProduct = {
-  id: string;
-  name: string;
-  sku?: string;
-  typeId?: string;
-  updatedAt?: string;
-  isPublished?: boolean;
-  dppId?: string;
+// Org: isole & assegnazioni
+import { listIslands, listAssignments, type Island } from "@/stores/orgStore";
+
+// Identity (fallback robusto)
+import * as IdentityApi from "@/services/api/identity";
+
+type LiteProduct = { id: string; name: string; sku?: string; typeId?: string; updatedAt?: string };
+
+type Actor = {
+  did: string;
+  role?: string;
+  displayName?: string;
+  firstName?: string;
+  lastName?: string;
+  fullName?: string;
+  name?: string;
+  username?: string;
+  email?: string;
 };
 
-// Best-effort: chiudo eventuali overlay/portal rimasti aperti quando si smonta la pagina
-function useCloseOverlaysOnUnmount() {
-  React.useEffect(() => {
-    return () => {
-      try {
-        const selectors = [
-          '[role="dialog"][data-state="open"]',
-          '[data-state="open"][data-radix-popper-content-wrapper]',
-          '[data-sonner]',
-          '.fixed.inset-0[data-overlay]'
-        ];
-        document.querySelectorAll(selectors.join(",")).forEach((el) => {
-          if (el instanceof HTMLElement) {
-            el.style.pointerEvents = "none";
-            el.style.display = "none";
-          }
-        });
-      } catch {
-        /* no-op */
-      }
-    };
-  }, []);
+function actorLabel(a: Actor) {
+  const candidates = [
+    a.displayName,
+    [a.firstName, a.lastName].filter(Boolean).join(" ").trim() || undefined,
+    a.fullName,
+    a.name,
+    a.username,
+    a.email ? String(a.email).split("@")[0] : undefined,
+  ].filter(Boolean) as string[];
+  const nm = candidates.find(Boolean) || "Operatore";
+  const role = a.role ? ` • ${a.role}` : "";
+  return `${nm} — ${a.did}${role}`;
+}
+
+function isOperatorRole(r?: string) {
+  const x = (r || "").toLowerCase();
+  return x.includes("operator") || x.includes("machine") || x.includes("macchin");
+}
+
+async function getCompanyActors(companyDid: string): Promise<Actor[]> {
+  const api: any = IdentityApi as any;
+  const fn =
+    api.listCompanyMembers ||
+    api.listMembersByCompany ||
+    api.listByCompany ||
+    api.listMembers ||
+    api.list ||
+    null;
+
+  try {
+    const res = typeof fn === "function" ? fn(companyDid) : [];
+    const arr = Array.isArray(res) ? res : await Promise.resolve(res);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((a: any) => ({
+        did: a.did || a.id || "",
+        role: a.role || a.type || a.kind,
+        displayName: a.displayName || a.name || a.fullName,
+        firstName: a.firstName || a.givenName,
+        lastName: a.lastName || a.familyName,
+        fullName: a.fullName,
+        username: a.username,
+        email: a.email,
+      }))
+      .filter((a) => isOperatorRole(a.role));
+  } catch {
+    return [];
+  }
 }
 
 export default function CompanyEventsPage() {
-  useCloseOverlaysOnUnmount();
+  const { currentUser } = useAuthStore();
+  const companyDid = currentUser?.companyDid || currentUser?.did || "";
 
-  const { currentUser } = useAuth();
-  const actor = currentUser?.did ? getActor(currentUser.did) : undefined;
-  const companyDid = currentUser?.companyDid ?? actor?.companyDid;
-
-  const basePath = "/company/products";
-
-  const [all, setAll] = React.useState<LiteProduct[]>([]);
   const [q, setQ] = React.useState("");
-  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  const [products, setProducts] = React.useState<LiteProduct[]>([]);
+  const [productId, setProductId] = React.useState<string>("");
 
-  // carica prodotti dell'azienda
+  const [islands, setIslands] = React.useState<Island[]>([]);
+  const [islandId, setIslandId] = React.useState<string>("");
+
+  const [actors, setActors] = React.useState<Actor[]>([]);
+  const [assignee, setAssignee] = React.useState<string>("");
+
+  // Load prodotti dell’azienda
   React.useEffect(() => {
     if (!companyDid) {
-      setAll([]);
-      setExpanded(new Set());
+      setProducts([]);
+      setProductId("");
       return;
     }
-    const data = listProductsByCompany(companyDid) as LiteProduct[];
+    const data = (listProductsByCompany(companyDid) as LiteProduct[]) || [];
     const sorted = [...data].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
-    setAll(sorted);
-
-    // per default, espandi il primo (se molti prodotti evita rumore)
-    if (sorted[0]) setExpanded(new Set([sorted[0].id]));
+    setProducts(sorted);
+    if (!productId && sorted[0]) setProductId(sorted[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyDid]);
 
-  const filtered = React.useMemo(() => {
-    if (!q.trim()) return all;
+  // Load isole
+  React.useEffect(() => {
+    if (!companyDid) {
+      setIslands([]);
+      setIslandId("");
+      return;
+    }
+    setIslands(listIslands(companyDid));
+  }, [companyDid]);
+
+  // Load attori (filtra per isola se selezionata)
+  React.useEffect(() => {
+    if (!companyDid) {
+      setActors([]);
+      return;
+    }
+    (async () => {
+      const all = await getCompanyActors(companyDid);
+      if (!islandId) {
+        setActors(all);
+        return;
+      }
+      const asg = listAssignments(companyDid);
+      const allowed = new Set(asg.filter((a) => a.islandId === islandId).map((a) => a.did));
+      const filtered = all.filter((a) => allowed.has(a.did));
+      setActors(filtered.length ? filtered : all);
+    })();
+  }, [companyDid, islandId]);
+
+  // Filtro prodotti testo libero
+  const filteredProducts = React.useMemo(() => {
+    if (!q.trim()) return products;
     const s = q.toLowerCase();
-    return all.filter(
+    return products.filter(
       (p) =>
         p.name.toLowerCase().includes(s) ||
         (p.sku ?? "").toLowerCase().includes(s) ||
         p.id.toLowerCase().includes(s) ||
         (p.typeId ?? "").toLowerCase().includes(s)
     );
-  }, [all, q]);
+  }, [products, q]);
 
-  function toggle(id: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function expandAll() {
-    setExpanded(new Set(filtered.map((p) => p.id)));
-  }
-  function collapseAll() {
-    setExpanded(new Set());
-  }
+  const timelineFilters = React.useMemo(
+    () => ({
+      islandId: islandId || undefined,
+      assignedToDid: assignee || undefined,
+    }),
+    [islandId, assignee]
+  );
 
   return (
-    // isolate + pointer events per impedire che overlay interni coprano la sidebar
-    <div className="relative z-0 isolate [&_*]:pointer-events-auto space-y-6">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Eventi — Azienda</CardTitle>
           <CardDescription>
-            Timeline degli eventi per tutti i prodotti dell’azienda{" "}
-            {companyDid ? <span className="font-mono">{companyDid}</span> : "(azienda non associata)"}.
+            Vista generale degli eventi sui prodotti aziendali. Applica filtri per Prodotto, Isola o Assegnatario.
           </CardDescription>
         </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-2">
+            <Label>Filtro prodotti</Label>
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, SKU, ID, Tipo…" />
+          </div>
 
-        <CardContent className="space-y-4">
-          {!companyDid ? (
-            <p className="text-sm text-red-500">Questo account non è associato ad alcuna azienda.</p>
-          ) : (
-            <>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div className="flex-1 space-y-2">
-                  <Label>Cerca</Label>
-                  <Input
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    placeholder="Nome, SKU, ID, Tipo…"
-                  />
-                </div>
-                <div className="sm:ml-auto flex gap-2">
-                  <Button variant="outline" onClick={expandAll}>
-                    Espandi tutto
-                  </Button>
-                  <Button variant="outline" onClick={collapseAll}>
-                    Comprimi tutto
-                  </Button>
-                </div>
-              </div>
+          <div className="space-y-2">
+            <Label>Prodotto</Label>
+            <Select value={productId} onValueChange={setProductId}>
+              <SelectTrigger aria-label="Seleziona prodotto">
+                <SelectValue placeholder="Seleziona un prodotto" />
+              </SelectTrigger>
+              <SelectContent className="z-[60]">
+                {filteredProducts.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">Nessun prodotto</div>
+                ) : (
+                  filteredProducts.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
 
-              {filtered.length === 0 ? (
-                <div className="text-sm text-muted-foreground">Nessun prodotto trovato.</div>
-              ) : (
-                <div className="space-y-4">
-                  {filtered.map((p) => {
-                    const isOpen = expanded.has(p.id);
-                    return (
-                      <Card key={p.id} className="border">
-                        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <CardTitle className="text-base">
-                              {p.name} {p.sku ? <span className="text-muted-foreground">• {p.sku}</span> : null}
-                            </CardTitle>
-                            <CardDescription className="text-xs">
-                              ID: <span className="font-mono">{p.id}</span> • Tipo:{" "}
-                              <span className="font-mono">{p.typeId ?? "—"}</span> • Ultimo aggiornamento:{" "}
-                              {p.updatedAt ? new Date(p.updatedAt).toLocaleString() : "—"}
-                              {p.isPublished ? (
-                                <>
-                                  {" "}
-                                  • <span className="text-green-600">Pubblicato</span> DPP:
-                                  <span className="font-mono"> {p.dppId}</span>
-                                </>
-                              ) : (
-                                <> • Bozza</>
-                              )}
-                            </CardDescription>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button asChild variant="outline" size="sm">
-                              <Link to={`${basePath}/${p.id}`}>Dettaglio</Link>
-                            </Button>
-                            <Button asChild variant="outline" size="sm">
-                              <Link to={`${basePath}/${p.id}/attributes`}>Caratteristiche</Link>
-                            </Button>
-                            <Button variant="outline" size="sm" onClick={() => toggle(p.id)}>
-                              {isOpen ? "Comprimi" : "Espandi"}
-                            </Button>
-                          </div>
-                        </CardHeader>
-                        {isOpen && (
-                          <CardContent>
-                            <EventTimeline productId={p.id} />
-                          </CardContent>
-                        )}
-                      </Card>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          )}
+          <div className="space-y-2">
+            <Label>Isola</Label>
+            <Select value={islandId} onValueChange={setIslandId}>
+              <SelectTrigger aria-label="Filtra per isola">
+                <SelectValue placeholder="Tutte" />
+              </SelectTrigger>
+              <SelectContent className="z-[60]">
+                <SelectItem value="">Tutte</SelectItem>
+                {islands.map((i) => (
+                  <SelectItem key={i.id} value={i.id}>
+                    {i.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Assegnatario</Label>
+            <Select value={assignee} onValueChange={setAssignee}>
+              <SelectTrigger aria-label="Filtra per assegnatario">
+                <SelectValue placeholder="Tutti" />
+              </SelectTrigger>
+              <SelectContent className="z-[60]">
+                <SelectItem value="">Tutti</SelectItem>
+                {actors.map((a) => (
+                  <SelectItem key={a.did} value={a.did}>
+                    {actorLabel(a)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </CardContent>
       </Card>
+
+      {productId ? (
+        <EventTimeline
+          productId={productId}
+          title="Timeline eventi (filtrata)"
+          showVerify
+          filters={timelineFilters}
+        />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Timeline</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Seleziona un prodotto per visualizzare la timeline.
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

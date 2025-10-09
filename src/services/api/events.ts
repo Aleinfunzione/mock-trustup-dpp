@@ -1,18 +1,13 @@
 // src/services/api/events.ts
 import { STORAGE_KEYS } from "@/utils/constants";
 import { safeGet, safeSet } from "@/utils/storage";
-import type { ProductEvent, EventType } from "@/types/event";
-
-/**
- * NOTE sui tipi evento:
- * Assicura che in `@/types/event` siano presenti anche:
- *  - "product.pill.added"
- *  - "product.pill.updated"
- *  - "product.pill.removed"
- * In caso di errori TS su EventType, estendere l'unione in quel file.
- */
-
-type EventsMap = Record<string, ProductEvent>; // indicizzato per eventId
+import type {
+  ProductEvent,
+  EventType,
+  EventListFilters,
+  EventCreateInput,
+  EventStatus,
+} from "@/types/event";
 
 /* ---------------- utils ---------------- */
 
@@ -27,6 +22,8 @@ function randomHex(bytes = 8): string {
 }
 
 /* ---------------- persistence ---------------- */
+
+type EventsMap = Record<string, ProductEvent>; // indicizzato per eventId
 
 function getEventsMap(): EventsMap {
   return safeGet<EventsMap>(STORAGE_KEYS.events, {});
@@ -56,46 +53,74 @@ function setEvent(
   return next;
 }
 
+/* ---------------- helpers ---------------- */
+
+function coalesceStatus(
+  s: any,
+  fallback: EventStatus = "done"
+): EventStatus {
+  const v = String(s || "").toLowerCase();
+  if (v === "queued" || v === "in_progress" || v === "done") return v as EventStatus;
+  return fallback;
+}
+
+function inRange(ts: string, from?: string, to?: string): boolean {
+  if (!from && !to) return true;
+  const t = ts || "";
+  if (from && t < from) return false;
+  if (to && t > to) return false;
+  return true;
+}
+
 /* ---------------- API principali ---------------- */
 
 /**
  * Crea un evento (MOCK).
- * Accetta anche campi UI extra (notes, assignedToDid, status) che vengono
- * salvati in `data.*` senza toccare la shape di ProductEvent.
+ * Accetta anche campi UI extra:
+ *  - notes, assignedToDid, status, islandId, executedByDid, executedAt
+ * I campi chiave vengono salvati sia top-level che in `data.*` per retro-compat.
  */
 export function createEvent(
   input:
-    | Omit<ProductEvent, "id" | "timestamp">
-    | (Omit<ProductEvent, "id" | "timestamp" | "data"> & {
-        notes?: string;
-        assignedToDid?: string;
-        status?: "open" | "in_progress" | "done" | string;
-      })
+    | (Omit<ProductEvent, "id" | "timestamp" | "createdAt"> & { notes?: string })
+    | EventCreateInput
 ): ProductEvent {
   const id = `evt_${randomHex(10)}`;
+  const now = nowISO();
 
-  const base: Omit<ProductEvent, "id" | "timestamp"> = {
-    type: (input as any).type as EventType,
-    productId: (input as any).productId,
-    companyDid: (input as any).companyDid,
-    actorDid: (input as any).actorDid,
-    data: (input as any).data ?? {},
-    related: (input as any).related,
-  };
+  const i: any = input;
 
-  // Merge dei campi UI opzionali nello spazio data.*
-  const ui = input as any;
-  base.data = {
-    ...(base.data ?? {}),
-    status: ui.status ?? (base.data?.status as any) ?? "open",
-    notes: ui.notes ?? (base.data?.notes as any),
-    assignedToDid: ui.assignedToDid ?? (base.data?.assignedToDid as any),
-  };
+  const status: EventStatus = coalesceStatus(i.status ?? i.data?.status ?? "done");
 
   const evt: ProductEvent = {
     id,
-    timestamp: nowISO(),
-    ...base,
+    type: i.type as EventType | string,
+    productId: i.productId,
+    companyDid: i.companyDid,
+    actorDid: i.actorDid,
+    byDid: i.byDid || i.actorDid,
+
+    timestamp: now,
+    createdAt: now,
+
+    status,
+
+    islandId: i.islandId ?? i.data?.islandId,
+    assignedToDid: i.assignedToDid ?? i.data?.assignedToDid,
+
+    executedByDid: i.executedByDid,
+    executedAt: i.executedAt,
+
+    data: {
+      ...(i.data ?? {}),
+      // retro-compat e UX
+      notes: i.notes ?? i.data?.notes,
+      status,
+      assignedToDid: i.assignedToDid ?? i.data?.assignedToDid,
+      islandId: i.islandId ?? i.data?.islandId,
+    },
+
+    related: i.related,
   };
 
   const map = getEventsMap();
@@ -109,39 +134,99 @@ export function getEvent(id: string): ProductEvent | undefined {
   return getEventsMap()[id];
 }
 
-export function listEventsByProduct(productId: string): ProductEvent[] {
-  return listAllEvents().filter((e) => e.productId === productId);
+/** Lista per prodotto, con filtri opzionali { islandId, assignedToDid } */
+export function listEventsByProduct(
+  productId: string,
+  filters?: { islandId?: string; assignedToDid?: string; type?: EventType | string; from?: string; to?: string }
+): ProductEvent[] {
+  const all = listAllEvents().filter((e) => e.productId === productId);
+
+  const f = filters || {};
+  const out = all.filter((e) => {
+    const created = e.createdAt || e.timestamp || "";
+    const matchIsland = f.islandId
+      ? e.islandId === f.islandId || e.data?.islandId === f.islandId
+      : true;
+    const matchAssignee = f.assignedToDid
+      ? e.assignedToDid === f.assignedToDid || e.data?.assignedToDid === f.assignedToDid
+      : true;
+    const matchType = f.type ? e.type === f.type : true;
+    const matchRange = inRange(created, f.from, f.to);
+    return matchIsland && matchAssignee && matchType && matchRange;
+  });
+
+  return out.sort((a, b) => {
+    const ta = (a.createdAt || a.timestamp || "");
+    const tb = (b.createdAt || b.timestamp || "");
+    return ta.localeCompare(tb);
+  });
+}
+
+/** Lista per company con filtro opzionale type/island/assignee */
+export function listEvents(
+  filters: EventListFilters & { companyDid?: string }
+): ProductEvent[] {
+  const all = listAllEvents();
+  const out = all.filter((e) => {
+    if (filters.companyDid && e.companyDid !== filters.companyDid) return false;
+    if (filters.productId && e.productId !== filters.productId) return false;
+    if (filters.type && e.type !== filters.type) return false;
+
+    const created = e.createdAt || e.timestamp || "";
+    if (!inRange(created, filters.from, filters.to)) return false;
+
+    if (filters.islandId) {
+      const ok = e.islandId === filters.islandId || e.data?.islandId === filters.islandId;
+      if (!ok) return false;
+    }
+    if (filters.assignedToDid) {
+      const ok =
+        e.assignedToDid === filters.assignedToDid ||
+        e.data?.assignedToDid === filters.assignedToDid;
+      if (!ok) return false;
+    }
+    return true;
+  });
+
+  return out.sort((a, b) => {
+    const ta = (a.createdAt || a.timestamp || "");
+    const tb = (b.createdAt || b.timestamp || "");
+    return ta.localeCompare(tb);
+  });
 }
 
 export function listEventsByCompany(
   companyDid: string,
   type?: EventType
 ): ProductEvent[] {
-  return listAllEvents().filter(
-    (e) => e.companyDid === companyDid && (type ? e.type === type : true)
-  );
+  return listEvents({ companyDid, type });
 }
 
 export function listEventsByType(type: EventType): ProductEvent[] {
-  return listAllEvents().filter((e) => e.type === type);
+  return listEvents({ type });
 }
 
 /* ---------------- API aggiuntive per i componenti ---------------- */
 
 export function listEventsByAssignee(assigneeDid: string): ProductEvent[] {
-  return listAllEvents().filter((e) => e.data?.assignedToDid === assigneeDid);
+  return listAllEvents().filter(
+    (e) =>
+      e.assignedToDid === assigneeDid || e.data?.assignedToDid === assigneeDid
+  );
 }
 
 export function updateEventStatus(
   id: string,
-  newStatus: "open" | "in_progress" | "done" | string,
+  newStatus: EventStatus,
   notes?: string
 ): ProductEvent {
+  const status = coalesceStatus(newStatus);
   return setEvent(id, (e) => ({
     ...e,
+    status,
     data: {
       ...(e.data ?? {}),
-      status: newStatus,
+      status,
       notes: typeof notes === "string" && notes.length ? notes : e.data?.notes,
       updatedAt: nowISO(),
     },

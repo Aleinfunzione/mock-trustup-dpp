@@ -23,8 +23,11 @@ import * as IdentityApi from "@/services/api/identity";
 import { canAfford, consume, costOf } from "@/services/orchestration/creditsPublish";
 import type { AccountOwnerType, ConsumeActor } from "@/types/credit";
 
-// org: assegnazioni a isole
+// org: assegnazioni (solo assignments qui)
 import { listAssignments } from "@/stores/orgStore";
+
+// isole: fonte unica = companyAttributes
+import { getCompanyAttrs } from "@/services/api/companyAttributes";
 
 type EventFormProps = {
   defaultProductId?: string;
@@ -34,6 +37,7 @@ type EventFormProps = {
 };
 
 type Scope = "product" | "bom";
+type TargetKind = "member" | "island";
 
 type BomOption = {
   id: string;
@@ -114,30 +118,28 @@ export default function EventForm({
   const { listMine } = useProducts();
   const { createEvent } = useEvents();
 
-  // prodotto / lista prodotti
   const [productId, setProductId] = useState<string>(defaultProductId ?? "");
   const [products, setProducts] = useState<Product[]>([]);
   const [productIslandId, setProductIslandId] = useState<string | undefined>(undefined);
 
-  // evento
   const [eventType, setEventType] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
   const [customType, setCustomType] = useState<string>("");
 
-  // ambito BOM
   const [scope, setScope] = useState<Scope>("product");
   const [targetNodeId, setTargetNodeId] = useState<string>("");
   const [bomOptions, setBomOptions] = useState<BomOption[]>([]);
 
-  // assegnazione
+  const [targetKind, setTargetKind] = useState<TargetKind>("member");
+  const [islandId, setIslandId] = useState<string>("");
+  const [islands, setIslands] = useState<Array<{ id: string; name: string }>>([]);
+
   const [assignee, setAssignee] = useState<string>("");
   const [actors, setActors] = useState<Actor[]>([]);
 
-  // crediti
   const [canPay, setCanPay] = useState<boolean>(true);
   const eventCost = costOf("EVENT_CREATE" as any);
 
-  // vari
   const [submitting, setSubmitting] = useState(false);
 
   const listMineRef = useRef(listMine);
@@ -145,19 +147,15 @@ export default function EventForm({
     listMineRef.current = listMine;
   }, [listMine]);
 
-  // prefill prodotto se arriva da props
   useEffect(() => {
     if (defaultProductId) setProductId(defaultProductId);
   }, [defaultProductId]);
 
-  // carica prodotti
   useEffect(() => {
     const load = async () => {
       let list: Product[] = [];
       try {
-        if (typeof listMineRef.current === "function") {
-          list = (listMineRef.current() as Product[]) || [];
-        }
+        if (typeof listMineRef.current === "function") list = (listMineRef.current() as Product[]) || [];
       } catch {}
       if ((!list || list.length === 0) && (currentUser?.companyDid || currentUser?.did)) {
         try {
@@ -165,23 +163,17 @@ export default function EventForm({
         } catch {}
       }
       setProducts(
-        [...(list || [])].sort(
-          (a: any, b: any) => (b?.updatedAt ?? "").localeCompare(a?.updatedAt ?? "")
-        )
+        [...(list || [])].sort((a: any, b: any) => (b?.updatedAt ?? "").localeCompare(a?.updatedAt ?? ""))
       );
     };
     load();
   }, [currentUser?.companyDid, currentUser?.did]);
 
-  // auto-select primo prodotto se vuoto
   useEffect(() => {
-    if (!defaultProductId && !productId && products.length > 0) {
-      setProductId(products[0].id);
-    }
+    if (!defaultProductId && !productId && products.length > 0) setProductId(products[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [products, defaultProductId]);
 
-  // carica BOM + islandId prodotto
   useEffect(() => {
     if (!productId) {
       setBomOptions([]);
@@ -194,30 +186,38 @@ export default function EventForm({
     const opts = flattenBOM(bom);
     setBomOptions(opts);
     setProductIslandId((prod as any)?.islandId);
-    if (targetNodeId && !opts.find((o) => o.id === targetNodeId)) {
-      setTargetNodeId("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId]);
+    if (targetNodeId && !opts.find((o) => o.id === targetNodeId)) setTargetNodeId("");
+  }, [productId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // carica attori e filtra per isola del prodotto se presente
+  // Isole dalla stessa fonte della pagina Isole
+  useEffect(() => {
+    const cid = currentUser?.companyDid || currentUser?.did;
+    if (!cid) return;
+    const isl = getCompanyAttrs(cid)?.islands ?? [];
+    setIslands(isl.map((i: any) => ({ id: i.id, name: i.name || i.id })));
+    if (!islandId && productIslandId && isl.some((i: any) => i.id === productIslandId)) {
+      setIslandId(productIslandId);
+    }
+  }, [currentUser?.companyDid, currentUser?.did, productIslandId, islandId]);
+
+  // Attori filtrati per isola se targetKind=member
   useEffect(() => {
     const companyDid = currentUser?.companyDid || currentUser?.did;
     if (!companyDid) return;
     (async () => {
       const all = (await getCompanyActors(companyDid)).filter((a) => isOperatorRole(a.role));
-      if (productIslandId) {
+      const filterIsland = targetKind === "member" ? (islandId || productIslandId) : undefined;
+      if (filterIsland) {
         const asg = listAssignments(companyDid);
-        const allowed = new Set(asg.filter(a => a.islandId === productIslandId).map(a => a.did));
-        const filtered = all.filter(a => allowed.has(a.did));
+        const allowed = new Set(asg.filter((a) => a.islandId === filterIsland).map((a) => a.did));
+        const filtered = all.filter((a) => allowed.has(a.did));
         setActors(filtered.length ? filtered : all);
       } else {
         setActors(all);
       }
     })();
-  }, [currentUser?.companyDid, currentUser?.did, productIslandId]);
+  }, [currentUser?.companyDid, currentUser?.did, targetKind, islandId, productIslandId]);
 
-  // pre-gating crediti
   useEffect(() => {
     let alive = true;
     async function checkCredits() {
@@ -236,7 +236,9 @@ export default function EventForm({
       }
     }
     checkCredits();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [currentUser?.did, currentUser?.companyDid, currentUser?.role]);
 
   const allowedTypes =
@@ -246,13 +248,18 @@ export default function EventForm({
 
   const effectiveType = eventType === "Altro" ? customType.trim() : eventType.trim();
 
+  const targetValid =
+    !!assignedToDid ||
+    (targetKind === "member" ? assignee.length > 0 : islandId.length > 0);
+
   const canSubmit =
     !submitting &&
     canPay &&
     !!currentUser?.did &&
     productId.length > 0 &&
     effectiveType.length > 0 &&
-    (scope === "product" || (scope === "bom" && targetNodeId.length > 0));
+    (scope === "product" || (scope === "bom" && targetNodeId.length > 0)) &&
+    targetValid;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -273,6 +280,10 @@ export default function EventForm({
       toast({ title: "Seleziona un nodo della BOM", variant: "destructive" });
       return;
     }
+    if (!targetValid) {
+      toast({ title: "Seleziona destinatario", description: "Membro/macchina oppure un’isola.", variant: "destructive" });
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -289,12 +300,11 @@ export default function EventForm({
         throw Object.assign(new Error("Crediti insufficienti"), { code: "INSUFFICIENT_CREDITS" });
       }
 
-      const targetMeta =
-        scope === "bom"
-          ? bomOptions.find((o) => o.id === targetNodeId) || null
-          : null;
+      const targetMeta = scope === "bom" ? bomOptions.find((o) => o.id === targetNodeId) || null : null;
 
-      const assigned = assignedToDid || assignee || undefined;
+      const assigned = assignedToDid || (targetKind === "member" ? assignee : undefined);
+      const chosenIslandId =
+        targetKind === "island" && islandId ? islandId : productIslandId || undefined;
 
       await consume(
         "EVENT_CREATE" as any,
@@ -307,7 +317,7 @@ export default function EventForm({
           nodeId: scope === "bom" ? targetNodeId : undefined,
           targetPath: scope === "bom" ? targetMeta?.path : undefined,
           targetLabel: scope === "bom" ? targetMeta?.label : undefined,
-          islandId: productIslandId,
+          islandId: chosenIslandId,
           assignedToDid: assigned,
         }
       );
@@ -325,7 +335,7 @@ export default function EventForm({
             targetNodeId: scope === "bom" ? targetNodeId : undefined,
             targetPath: scope === "bom" ? targetMeta?.path : undefined,
             targetLabel: scope === "bom" ? targetMeta?.label : undefined,
-            islandId: productIslandId,
+            islandId: chosenIslandId,
           },
         } as any ),
       });
@@ -335,7 +345,7 @@ export default function EventForm({
         description:
           `#${evt.id} • ${effectiveType}` +
           (scope === "bom" && targetMeta?.label ? ` • BOM: ${targetMeta.label}` : "") +
-          (productIslandId ? ` • Isola: ${productIslandId}` : "") +
+          (chosenIslandId ? ` • Isola: ${chosenIslandId}` : "") +
           ` • costo ${eventCost} crediti`,
       });
 
@@ -346,6 +356,7 @@ export default function EventForm({
       setScope("product");
       setTargetNodeId("");
       setAssignee("");
+      if (targetKind === "island") setIslandId("");
 
       onCreated?.(evt.id);
     } catch (err: any) {
@@ -464,9 +475,7 @@ export default function EventForm({
                   )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                Puoi associare l’evento a un componente specifico o gruppo.
-              </p>
+              <p className="text-xs text-muted-foreground">Puoi associare l’evento a un componente specifico o gruppo.</p>
             </div>
           )}
 
@@ -482,38 +491,83 @@ export default function EventForm({
             />
           </div>
 
-          {/* Assegnazione */}
-          {assignedToDid ? (
+          {/* Destinatario */}
+          {!assignedToDid && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="targetKind">Destinatario</Label>
+                <Select value={targetKind} onValueChange={(v: TargetKind) => { setTargetKind(v); }}>
+                  <SelectTrigger id="targetKind" aria-label="Seleziona destinatario">
+                    <SelectValue placeholder="Seleziona destinatario" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[60]">
+                    <SelectItem value="member">Membro/Macchina</SelectItem>
+                    <SelectItem value="island">Isola</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {targetKind === "island" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="island">Isola</Label>
+                  <Select value={islandId} onValueChange={setIslandId}>
+                    <SelectTrigger id="island" aria-label="Seleziona isola">
+                      <SelectValue placeholder="Seleziona un’isola" />
+                    </SelectTrigger>
+                    <SelectContent className="z-[60]">
+                      {islands.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">Nessuna isola definita</div>
+                      ) : (
+                        islands.map((i) => (
+                          <SelectItem key={i.id} value={i.id}>
+                            {i.name} ({i.id})
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {productIslandId && (
+                    <p className="text-xs text-muted-foreground">
+                      Suggerita dal prodotto: <span className="font-mono">{productIslandId}</span>
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="assignee">Assegna a (operatore/macchina)</Label>
+                  <Select value={assignee} onValueChange={setAssignee}>
+                    <SelectTrigger id="assignee" aria-label="Seleziona assegnatario">
+                      <SelectValue placeholder="Seleziona un operatore o una macchina" />
+                    </SelectTrigger>
+                    <SelectContent className="z-[60]">
+                      {actors.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                          Nessun operatore/macchina disponibile
+                        </div>
+                      ) : (
+                        actors.map((a) => (
+                          <SelectItem key={a.did} value={a.did}>
+                            {actorLabel(a)}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {(islandId || productIslandId) && (
+                    <p className="text-xs text-muted-foreground">
+                      Filtro isola:{" "}
+                      <span className="font-mono">{islandId || productIslandId}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {assignedToDid && (
             <div className="space-y-1 text-sm">
               <span className="text-muted-foreground">Assegnato a:</span>{" "}
               <span className="font-mono">{assignedToDid}</span>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <Label htmlFor="assignee">Assegna a (operatore/macchina)</Label>
-              <Select value={assignee} onValueChange={setAssignee}>
-                <SelectTrigger id="assignee" aria-label="Seleziona assegnatario">
-                  <SelectValue placeholder="Seleziona un operatore o una macchina" />
-                </SelectTrigger>
-                <SelectContent className="z-[60]">
-                  {actors.length === 0 ? (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                      Nessun operatore/macchina disponibile
-                    </div>
-                  ) : (
-                    actors.map((a) => (
-                      <SelectItem key={a.did} value={a.did}>
-                        {actorLabel(a)}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-              {productIslandId && (
-                <p className="text-xs text-muted-foreground">
-                  Filtrato per isola: <span className="font-mono">{productIslandId}</span>
-                </p>
-              )}
             </div>
           )}
 
