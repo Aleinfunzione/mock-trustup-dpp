@@ -124,10 +124,23 @@ function mustAccount(id: string): CreditAccount {
   return acc;
 }
 function splitAccountId(accId: string): { ownerType?: AccountOwnerType; ownerId?: string } {
-  // acc:<type>:<id>
   const parts = accId?.split(":");
   if (parts?.length === 3) return { ownerType: parts[1] as AccountOwnerType, ownerId: parts[2] };
   return {};
+}
+
+// ---------- low-balance watcher ----------
+type LowBalanceEvent = { accountId: string; balance: number; threshold: number; ts: string };
+const lowBalanceWatchers = new Set<(e: LowBalanceEvent) => void>();
+export function onLowBalance(cb: (e: LowBalanceEvent) => void) {
+  lowBalanceWatchers.add(cb);
+  return () => lowBalanceWatchers.delete(cb);
+}
+function maybeNotifyLow(acc: CreditAccount, ts: string) {
+  const thr = acc.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD;
+  if (acc.balance <= thr) {
+    lowBalanceWatchers.forEach((fn) => fn({ accountId: acc.id, balance: acc.balance, threshold: thr, ts }));
+  }
 }
 
 // ---------- bootstrap / ensure ----------
@@ -295,7 +308,7 @@ export function history(params?: { accountId?: string; limit?: number }): Credit
   const all = loadTx();
   let list = all;
   if (params?.accountId) {
-    list = all.filter((t) => t.fromAccountId === params.accountId || t.toAccountId === params.accountId);
+    list = all.filter((t) => (t as any).fromAccountId === params.accountId || (t as any).toAccountId === params.accountId);
   }
   if (params?.limit && params.limit > 0) return list.slice(-params.limit);
   return list;
@@ -330,11 +343,17 @@ export function topup(toAccountId: string, amount: number, meta?: any): CreditTx
     type: "topup",
     toAccountId,
     amount,
-    meta: { ...meta, postBalance: nextBalance, lowBalance: nextBalance <= (acc.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD) },
-  };
-  accounts[toAccountId] = { ...acc, balance: nextBalance, updatedAt: ts };
+    meta: {
+      ...meta,
+      balance_after: nextBalance,
+      lowBalance: nextBalance <= (acc.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD),
+    },
+  } as any;
+  const nextAcc = { ...acc, balance: nextBalance, updatedAt: ts };
+  accounts[toAccountId] = nextAcc;
   const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
   if (!ok) throw new Error("Race condition nel salvataggio topup");
+  maybeNotifyLow(nextAcc, ts);
   return tx;
 }
 
@@ -364,13 +383,17 @@ export function transfer(fromAccountId: string, toAccountId: string, amount: num
       lowBalanceFrom: fromNext <= (from.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD),
       lowBalanceTo: toNext <= (to.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD),
     },
-  };
+  } as any;
 
-  accounts[fromAccountId] = { ...from, balance: fromNext, updatedAt: ts };
-  accounts[toAccountId] = { ...to, balance: toNext, updatedAt: ts };
+  const nextFrom = { ...from, balance: fromNext, updatedAt: ts };
+  const nextTo = { ...to, balance: toNext, updatedAt: ts };
+  accounts[fromAccountId] = nextFrom;
+  accounts[toAccountId] = nextTo;
 
   const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
   if (!ok) throw new Error("Race condition nel salvataggio transfer");
+  maybeNotifyLow(nextFrom, ts);
+  maybeNotifyLow(nextTo, ts);
   return tx;
 }
 
@@ -379,12 +402,23 @@ export function setLowBalanceThreshold(accountId: string, threshold: number) {
   const prevMeta = loadMeta();
   const accounts = { ...loadAccounts() };
   const acc = mustAccount(accountId);
-  accounts[accountId] = { ...acc, lowBalanceThreshold: threshold, updatedAt: nowISO() };
+  const next = { ...acc, lowBalanceThreshold: threshold, updatedAt: nowISO() };
+  accounts[accountId] = next;
   const ok = persistAccountsAndTx(accounts, [], prevMeta);
   if (!ok) throw new Error("Race condition nel salvataggio threshold");
+  maybeNotifyLow(next, next.updatedAt!);
 }
-/** Alias ergonomico */
 export const setThreshold = setLowBalanceThreshold;
+
+// ---------- dedup helpers ----------
+function makeDedupKey(action: CreditAction, ref?: { id?: string; eventId?: string; productId?: string }): string | undefined {
+  const base = ref?.eventId || ref?.id || "";
+  if (!base) return undefined;
+  return `${action}:${base}`;
+}
+function findByDedup(dedup: string): CreditTx | undefined {
+  return loadTx().find((t) => (t as any)?.meta?.dedup_key === dedup);
+}
 
 // ---------- simulate / consume ----------
 function resolvePayer(
@@ -472,7 +506,6 @@ export function consume(
         addToIslandBudget(companyId, ref.islandId, -cost);
         islandBucketCharged = true;
       }
-      // se insufficiente, fallback: paghi uguale dal conto company senza toccare bucket
     }
   }
 
@@ -480,27 +513,118 @@ export function consume(
   const nextBalance = round6(payer.balance - cost);
   const low = nextBalance <= (payer.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD);
 
-    const tx: CreditTx = {
-     id: txId("consume"),
-     ts,
-     type: "consume",
-     fromAccountId: payerAccountId,
-     amount: cost,
-     action,
-         meta: {
-         actor,
-            ref, 
-    postBalance: nextBalance,
-    lowBalance: low,
-    islandBucketCharged,
-  },
-};
+  const tx: CreditTx = {
+    id: txId("consume"),
+    ts,
+    type: "consume",
+    fromAccountId: payerAccountId,
+    amount: cost,
+    action,
+    meta: {
+      actor,
+      ref,
+      balance_after: nextBalance,
+      lowBalance: low,
+      islandBucketCharged,
+    },
+  } as any;
 
-  accounts[payerAccountId] = { ...payer, balance: nextBalance, updatedAt: ts };
+  const nextPayer = { ...payer, balance: nextBalance, updatedAt: ts };
+  const accountsNext = { ...accounts, [payerAccountId]: nextPayer };
 
-  const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
+  const ok = persistAccountsAndTx(accountsNext, [tx], prevMeta);
   if (!ok) return { ok: false, reason: "NO_PAYER", detail: "Race condition nel salvataggio consume" };
 
+  maybeNotifyLow(nextPayer, ts);
+  const result: ConsumeResultOk = { ok: true, payerAccountId, tx };
+  return result;
+}
+
+// ---------- spend (idempotente) ----------
+const SPEND_ACTIONS: CreditAction[] = [
+  "ASSIGNMENT_CREATE",
+  "TELEMETRY_PACKET",
+  "MACHINE_AUTOCOMPLETE",
+] as unknown as CreditAction[];
+
+export function spend(
+  action: CreditAction,
+  actor: ConsumeActor,
+  ref?: ConsumeRef,
+  qty = 1,
+  dedup_key?: string
+): ConsumeResult {
+  // whitelist azioni Step 1; per altre delega a consume
+  if (!SPEND_ACTIONS.includes(action)) {
+    return consume(action, actor, ref, qty);
+  }
+
+  const n = Number.isFinite(qty) && qty > 0 ? qty : 1;
+  const cost = round6(getActionCost(action, n));
+  const dk = dedup_key || makeDedupKey(action, ref);
+  if (dk) {
+    const existing = findByDedup(dk);
+    if (existing) {
+      return { ok: true, payerAccountId: (existing as any).fromAccountId, tx: existing } as ConsumeResultOk;
+    }
+  }
+
+  const { payerAccountId, reason } = resolvePayer(action, actor, cost);
+  if (!payerAccountId) {
+    return { ok: false, reason: reason ?? "NO_PAYER", detail: { action, actor, cost } };
+  }
+
+  const prevMeta = loadMeta();
+  const accounts = { ...loadAccounts() };
+  const payer = mustAccount(payerAccountId);
+  if (payer.balance < cost) {
+    return { ok: false, reason: "INSUFFICIENT_FUNDS", detail: { payerAccountId, cost, balance: payer.balance } };
+  }
+
+  // Island bucket charge se company + islandId
+  let islandBucketCharged = false;
+  if (ref?.islandId) {
+    const { ownerType, ownerId } = splitAccountId(payerAccountId);
+    if (ownerType === "company" && ownerId) {
+      const cur = getIslandBudget(ownerId, ref.islandId);
+      if (cur >= cost) {
+        addToIslandBudget(ownerId, ref.islandId, -cost);
+        islandBucketCharged = true;
+      }
+    }
+  }
+
+  const ts = nowISO();
+  const nextBalance = round6(payer.balance - cost);
+  const low = nextBalance <= (payer.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD);
+
+  // N.B. type = action per tabella/CSV; campi richiesti in meta.
+  const tx: CreditTx = {
+    id: txId("spend"),
+    ts,
+    type: action as unknown as string,
+    fromAccountId: payerAccountId,
+    amount: cost,
+    meta: {
+      actor,
+      ref: {
+        ...ref,
+        productId: ref?.productId,
+        eventId: ref?.eventId,
+        actorDid: actor?.ownerId,
+      },
+      balance_after: nextBalance,
+      lowBalance: low,
+      islandBucketCharged,
+      dedup_key: dk,
+    },
+  } as any;
+
+  const nextPayer = { ...payer, balance: nextBalance, updatedAt: ts };
+  const ok = persistAccountsAndTx({ ...accounts, [payerAccountId]: nextPayer }, [tx], prevMeta);
+  if (!ok) return { ok: false, reason: "NO_PAYER", detail: "Race condition nel salvataggio spend" };
+
+  maybeNotifyLow(nextPayer, ts);
   const result: ConsumeResultOk = { ok: true, payerAccountId, tx };
   return result;
 }

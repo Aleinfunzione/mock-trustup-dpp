@@ -19,11 +19,11 @@ import { getProduct as getProductSvc, listProductsByCompany } from "@/services/a
 // identity fallback
 import * as IdentityApi from "@/services/api/identity";
 
-// crediti orchestrati
-import { canAfford, consume, costOf } from "@/services/orchestration/creditsPublish";
-import type { AccountOwnerType, ConsumeActor } from "@/types/credit";
+// credits API
+import { simulate as simulateCredits, spend as spendCredits } from "@/services/api/credits";
+import type { AccountOwnerType, ConsumeActor, CreditAction, ConsumeResult } from "@/types/credit";
 
-// org: assegnazioni (solo assignments qui)
+// org: assegnazioni
 import { listAssignments } from "@/stores/orgStore";
 
 // isole: fonte unica = companyAttributes
@@ -116,6 +116,13 @@ function fmtCredits(n: number) {
   return s.replace(/\.?0+$/, "");
 }
 
+function genId(prefix = "evt") {
+  const rnd =
+    (globalThis as any)?.crypto?.randomUUID?.() ??
+    `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  return String(rnd);
+}
+
 export default function EventForm({
   defaultProductId,
   assignedToDid,
@@ -147,7 +154,7 @@ export default function EventForm({
   const [actors, setActors] = useState<Actor[]>([]);
 
   const [canPay, setCanPay] = useState<boolean>(true);
-  const eventCost = costOf("EVENT_CREATE" as any);
+  const [actionCost, setActionCost] = useState<number>(0);
 
   const [submitting, setSubmitting] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -198,7 +205,7 @@ export default function EventForm({
     if (targetNodeId && !opts.find((o) => o.id === targetNodeId)) setTargetNodeId("");
   }, [productId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Isole dalla stessa fonte della pagina Isole
+  // Isole
   useEffect(() => {
     const cid = currentUser?.companyDid || currentUser?.did;
     if (!cid) return;
@@ -227,11 +234,15 @@ export default function EventForm({
     })();
   }, [currentUser?.companyDid, currentUser?.did, targetKind, islandId, productIslandId]);
 
-  // credito disponibile
+  // credito disponibile + costo dinamico
   useEffect(() => {
     let alive = true;
     async function checkCredits() {
-      if (!currentUser?.did) return setCanPay(true);
+      if (!currentUser?.did) {
+        setCanPay(true);
+        setActionCost(0);
+        return;
+      }
       try {
         const u = currentUser as any;
         const actor: ConsumeActor = {
@@ -239,17 +250,25 @@ export default function EventForm({
           ownerId: (u?.id ?? u?.did) as string,
           companyId: (u?.companyId ?? u?.companyDid) as string | undefined,
         };
-        const ok = await canAfford("EVENT_CREATE" as any, actor);
-        if (alive) setCanPay(ok);
+        const assigned = assignedToDid || (targetKind === "member" ? assignee : undefined);
+        const action: CreditAction = assigned ? "ASSIGNMENT_CREATE" : ("EVENT_CREATE" as CreditAction);
+        const sim = simulateCredits(action, actor, 1);
+        if (alive) {
+          setCanPay(!!sim.payer);
+          setActionCost(sim.cost || 0);
+        }
       } catch {
-        if (alive) setCanPay(false);
+        if (alive) {
+          setCanPay(false);
+          setActionCost(0);
+        }
       }
     }
     checkCredits();
     return () => {
       alive = false;
     };
-  }, [currentUser?.did, currentUser?.companyDid, currentUser?.role]);
+  }, [currentUser?.did, currentUser?.companyDid, currentUser?.role, assignedToDid, targetKind, assignee]);
 
   const allowedTypes =
     Array.isArray(EVENT_TYPES) && EVENT_TYPES.length
@@ -292,32 +311,47 @@ export default function EventForm({
     const chosenIslandId =
       targetKind === "island" && islandId ? islandId : productIslandId || undefined;
 
-    const ok = await canAfford("EVENT_CREATE" as any, actor);
-    if (!ok) {
-      setCanPay(false);
-      throw Object.assign(new Error("Crediti insufficienti"), { code: "INSUFFICIENT_CREDITS" });
-    }
+    const action: CreditAction = assigned ? "ASSIGNMENT_CREATE" : ("EVENT_CREATE" as CreditAction);
 
-    // consume → txRef
-    const consumeRes: any = await consume(
-      "EVENT_CREATE" as any,
+    // Pre-genera eventId per idempotenza
+    const preEventId = genId("evt");
+
+    // Spend idempotente con dedup_key
+    const spendRes = spendCredits(
+      action,
       actor,
       {
         kind: "event",
         productId,
+        eventId: preEventId,
+        islandId: chosenIslandId,
+        actorDid: actor.ownerId,
         type: effectiveType,
         scope,
         nodeId: scope === "bom" ? targetNodeId : undefined,
         targetPath: scope === "bom" ? targetMeta?.path : undefined,
         targetLabel: scope === "bom" ? targetMeta?.label : undefined,
-        islandId: chosenIslandId,
         assignedToDid: assigned,
-      }
-    );
-    const txRef: string | undefined = consumeRes?.tx?.id;
+      } as any,
+      1,
+      `${action}:${preEventId}`
+    ) as ConsumeResult;
 
-    // create event → salva txRef e poi annota tx con eventId
+    if (spendRes.ok === false) {
+      const errRes = spendRes as Extract<ConsumeResult, { ok: false }>;
+      const msg =
+       errRes.reason === "INSUFFICIENT_FUNDS"
+        ? "Crediti insufficienti"
+        : errRes.reason === "NO_PAYER"
+        ? "Nessuno sponsor disponibile"
+        : "Conflitto di salvataggio";
+    throw Object.assign(new Error(msg), { code: errRes.reason, detail: errRes.detail });
+    }
+    const txRef: string | undefined = (spendRes as any).tx?.id;
+
+    // create event → usa l'id pre-generato per allineare dedup_key
     const evt = await createEvent({
+      id: preEventId,
       productId,
       companyDid: currentUser!.companyDid ?? currentUser!.did,
       actorDid: currentUser!.did,
@@ -334,11 +368,11 @@ export default function EventForm({
           txRef,
         },
       } as any ),
-    });
+    } as any);
 
     if (txRef) {
       try {
-        annotateTx(txRef, { ref: { eventId: evt.id, productId, islandId: chosenIslandId } });
+        annotateTx(txRef, { ref: { eventId: preEventId, productId, actorDid: actor.ownerId, islandId: chosenIslandId } });
       } catch {
         // best-effort
       }
@@ -347,10 +381,10 @@ export default function EventForm({
     toast({
       title: "Evento registrato",
       description:
-        `#${evt.id} • ${effectiveType}` +
+        `#${preEventId} • ${effectiveType}` +
         (scope === "bom" && targetMeta?.label ? ` • BOM: ${targetMeta.label}` : "") +
         (chosenIslandId ? ` • Isola: ${chosenIslandId}` : "") +
-        ` • costo ${fmtCredits(eventCost)} crediti`,
+        ` • costo ${fmtCredits(actionCost)} crediti`,
     });
 
     if (!defaultProductId) setProductId("");
@@ -362,8 +396,8 @@ export default function EventForm({
     setAssignee("");
     if (targetKind === "island") setIslandId("");
 
-    onCreated?.(evt.id);
-    return evt.id;
+    onCreated?.(preEventId);
+    return preEventId;
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -414,13 +448,17 @@ export default function EventForm({
     try {
       const actor = await buildActor();
       if (!actor) return;
-      const ok = await canAfford("EVENT_CREATE" as any, actor);
-      if (!ok) {
+      const assigned = assignedToDid || (targetKind === "member" ? assignee : undefined);
+      const action: CreditAction = assigned ? "ASSIGNMENT_CREATE" : ("EVENT_CREATE" as CreditAction);
+      const sim = simulateCredits(action, actor, 1);
+      if (!sim.payer) {
         setCanPay(false);
-        toast({ title: "Saldo ancora insufficiente", description: "Ricarica il conto o cambia sponsor." , variant: "destructive" });
+        setActionCost(sim.cost || 0);
+        toast({ title: "Saldo insufficiente", description: "Ricarica il conto o cambia sponsor.", variant: "destructive" });
         return;
       }
       setCanPay(true);
+      setActionCost(sim.cost || 0);
       await attemptFlow();
     } catch (err: any) {
       toast({
@@ -636,7 +674,7 @@ export default function EventForm({
 
           <CardFooter className="px-0 flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div className="text-xs text-muted-foreground">
-              Costo azione: <span className="font-mono">{fmtCredits(eventCost)}</span> crediti
+              Costo azione: <span className="font-mono">{fmtCredits(actionCost)}</span> crediti
               {!canPay && <span className="text-destructive ml-2">• crediti insufficienti</span>}
             </div>
             <div className="flex gap-2 w-full sm:w-auto">

@@ -1,7 +1,7 @@
 // src/services/api/credits.ts
 import {
   getAccountId,
-  getBalance,
+  getBalance as storeGetBalance,
   getBalancesByIds,
   ensureAccounts,
   initCredits as initStoreCredits,
@@ -9,11 +9,10 @@ import {
   ensureMemberAccount as storeEnsureMemberAccount,
   simulate as storeSimulate,
   consume as storeConsume,
+  spend as storeSpend,
   history,
   topup,
   transfer,
-  isLowBalance,
-  setLowBalanceThreshold,
   listAccounts as storeListAccounts,
 } from "@/stores/creditStore";
 import type {
@@ -55,6 +54,18 @@ export function initCredits(seed: InitSeed) {
 
 export function getBalances(accountIds: string[]) {
   return getBalancesByIds(accountIds);
+}
+
+export function getAccountBalance(accountId: string) {
+  return storeGetBalance(accountId);
+}
+
+export function simulate(
+  action: CreditAction,
+  actor: ConsumeActor,
+  qty = 1
+) {
+  return storeSimulate(action, actor, qty);
 }
 
 export function simulateCost(
@@ -102,17 +113,51 @@ export function simulateCost(
 function isErr(res: _ConsumeResult): res is Extract<_ConsumeResult, { ok: false }> {
   return res.ok === false;
 }
+function normalizeReason(reason?: string, detail?: any): "INSUFFICIENT_FUNDS" | "NO_PAYER" | "RACE_CONDITION" {
+  if (reason === "INSUFFICIENT_FUNDS" || reason === "NO_PAYER") return reason;
+  const d = typeof detail === "string" ? detail : JSON.stringify(detail || {});
+  if (d.includes("Race condition")) return "RACE_CONDITION";
+  return "NO_PAYER";
+}
 
-type ConsumeRef = { kind: string; id: string } & Record<string, any>;
+type ConsumeRef = {
+  kind?: string;
+  id?: string;
+  productId?: string;
+  eventId?: string;
+  islandId?: string;
+  actorDid?: string;
+} & Record<string, any>;
 
 export function consumeForAction(
   action: CreditAction,
   actor: ConsumeActor,
   ref?: ConsumeRef,
   qty = 1
-): { ok: true; tx: CreditTx; payerAccountId: string } | { ok: false; reason: string; detail?: any } {
+): { ok: true; tx: CreditTx; payerAccountId: string } | { ok: false; reason: "INSUFFICIENT_FUNDS" | "NO_PAYER" | "RACE_CONDITION"; detail?: any } {
   const res = storeConsume(action, actor, ref, qty);
-  if (isErr(res)) return { ok: false, reason: String(res.reason), detail: res.detail };
+  if (isErr(res)) return { ok: false, reason: normalizeReason(String(res.reason), res.detail), detail: res.detail };
+  return { ok: true, tx: res.tx, payerAccountId: res.payerAccountId! };
+}
+
+// alias espliciti richiesti
+export function grant(toAccountId: string, amount: number, meta?: any) {
+  return topup(toAccountId, amount, meta);
+}
+
+export function transferBetween(fromAccountId: string, toAccountId: string, amount: number, meta?: any) {
+  return transfer(fromAccountId, toAccountId, amount, meta);
+}
+
+export function spend(
+  action: CreditAction,
+  actor: ConsumeActor,
+  ref?: ConsumeRef,
+  qty = 1,
+  dedup_key?: string
+): { ok: true; tx: CreditTx; payerAccountId: string } | { ok: false; reason: "INSUFFICIENT_FUNDS" | "NO_PAYER" | "RACE_CONDITION"; detail?: any } {
+  const res = storeSpend(action, actor, ref, qty, dedup_key);
+  if (isErr(res)) return { ok: false, reason: normalizeReason(String(res.reason), res.detail), detail: res.detail };
   return { ok: true, tx: res.tx, payerAccountId: res.payerAccountId! };
 }
 
@@ -124,11 +169,10 @@ export function topupAccount(toAccountId: string, amount: number, meta?: any) {
   return topup(toAccountId, amount, meta);
 }
 
-export function transferBetween(fromAccountId: string, toAccountId: string, amount: number, meta?: any) {
-  return transfer(fromAccountId, toAccountId, amount, meta);
-}
-
 export function setThreshold(accountId: string, threshold: number) {
+  // delega al layer store
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { setLowBalanceThreshold } = require("@/stores/creditStore");
   setLowBalanceThreshold(accountId, threshold);
 }
 
