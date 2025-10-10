@@ -67,11 +67,23 @@ export const FEATURES = {
 } as const;
 
 /**
+ * Soglie low-balance per toast/badge.
+ */
+export const LOW = {
+  ADMIN: 50,
+  COMPANY: 20,
+  MEMBER: 5,
+} as const;
+
+/**
  * Costi/fees mock dell'applicazione.
- * (Puoi mantenere per compat senza toccare il nuovo PRICE_TABLE.)
+ * Mantieni `publishVC` per compat. I nuovi kind coprono i consumi mancanti.
  */
 export const COSTS = {
-  publishVC: 1, // costo (mock) in crediti per emettere un DPP/VC
+  publishVC: 1,              // Emissione DPP/VC
+  ASSIGNMENT_CREATE: 1,      // Creazione assegnazione evento
+  TELEMETRY_PACKET: 0.1,     // Pacchetto telemetria
+  MACHINE_AUTOCOMPLETE: 0.5, // Completamento automatico macchina
 } as const;
 
 /* ------------------------------------------------------------------ */

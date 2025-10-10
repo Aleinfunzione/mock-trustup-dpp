@@ -48,11 +48,7 @@ export default function Header() {
 
   const actor =
     role && userDid
-      ? {
-          ownerType: role,
-          ownerId: userDid,
-          companyId: companyDid,
-        }
+      ? { ownerType: role, ownerId: userDid, companyId: companyDid }
       : undefined;
 
   return (
@@ -66,12 +62,23 @@ export default function Header() {
     >
       <div className="flex items-center gap-3 min-w-0">
         <BackButton fallbackTo={base} />
+
         {showCrumbs ? (
           <nav className="text-sm flex items-center gap-2 min-w-0" aria-label="Breadcrumb">
             {crumbs.map((c, i) => (
               <span key={i} className="flex items-center gap-2 min-w-0">
                 {i > 0 && <span className="text-muted-foreground">/</span>}
-                {c.to ? (
+
+                {i === 0 ? (
+                  <Link to={base} className="inline-flex items-center shrink-0" title="TRUSTUP">
+                    <img
+                      src="/brand/TRUSTUP.png"
+                      alt="TRUSTUP"
+                      className="h-5 md:h-6 invert select-none pointer-events-none"
+                      draggable={false}
+                    />
+                  </Link>
+                ) : c.to ? (
                   <Link to={c.to} className="hover:underline truncate max-w-[18ch]" title={String(c.label)}>
                     {c.label}
                   </Link>
@@ -82,15 +89,20 @@ export default function Header() {
             ))}
           </nav>
         ) : (
-          <div className="font-semibold">TRUSTUP</div>
+          <Link to={base} className="inline-flex items-center shrink-0" title="TRUSTUP">
+            <img
+              src="/brand/TRUSTUP.png"
+              alt="TRUSTUP"
+              className="h-5 md:h-6 invert select-none pointer-events-none"
+              draggable={false}
+            />
+          </Link>
         )}
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Unico badge crediti: solo attore */}
         <CreditsBadge actor={actor} showCompany={false} showActor compact refreshMs={5000} />
 
-        {/* DID utente e azienda */}
         {companyDid && (
           <span className="hidden sm:inline text-xs font-mono text-muted-foreground" title={`companyDid: ${companyDid}`}>
             org:{shortId(companyDid)}

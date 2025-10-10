@@ -18,6 +18,8 @@ import {
 } from "@/services/api/credits";
 import type { CreditTx } from "@/types/credit";
 import CreditsBadge from "@/components/credit/CreditsBadge";
+import CreditHistory from "@/components/credit/CreditHistory";
+import { ensureCompanyAccount } from "@/stores/creditStore"; // nuovo
 
 // sorgenti possibili per le aziende
 import * as IdentityApi from "@/services/api/identity";
@@ -40,18 +42,15 @@ export default function AdminCreditsPage() {
   const [txs, setTxs] = React.useState<CreditTx[]>([]);
   const [loading, setLoading] = React.useState(false);
 
-  // admin account id
   React.useEffect(() => {
     if (!adminDid) return;
     setAdminAcc(accountId("admin", adminDid));
   }, [adminDid]);
 
-  // carica aziende da API/ledger/storage
   React.useEffect(() => {
     loadCompanies().then(setCompanies).catch(() => setCompanies([]));
   }, []);
 
-  // refresh pannello
   const refresh = React.useCallback(() => {
     if (!companyDid) {
       setCompanyAcc("");
@@ -81,6 +80,20 @@ export default function AdminCreditsPage() {
       members: [],
       defaults: { balance: 0, threshold: 0 },
     });
+  }
+
+  async function handleEnsureCompanyAccount() {
+    if (!companyDid) {
+      toast({ title: "Seleziona un’azienda", variant: "destructive" });
+      return;
+    }
+    try {
+      ensureCompanyAccount(companyDid);
+      toast({ title: "Account azienda pronto" });
+      refresh();
+    } catch (e: any) {
+      toast({ title: "Errore creazione account", description: e?.message ?? "Operazione fallita", variant: "destructive" });
+    }
   }
 
   async function handleTopup() {
@@ -134,14 +147,12 @@ export default function AdminCreditsPage() {
     }
     setLoading(true);
     try {
-      // crea account se mancanti con saldi iniziali
       initCredits({
         adminId: adminDid,
         companyIds: [companyDid],
         members: [],
-        defaults: { balance: 200, threshold: 10 }, // saldo iniziale fittizio
+        defaults: { balance: 200, threshold: 10 },
       });
-      // ricarica anche l'admin per i test
       const aId = accountId("admin", adminDid);
       const cId = accountId("company", companyDid);
       topupAccount(aId, 800, { reason: "seed-demo" });
@@ -182,10 +193,7 @@ export default function AdminCreditsPage() {
             <div className="sm:col-span-2 space-y-2">
               <Label>Azienda</Label>
               <div className="flex gap-2">
-                <Select
-                  value={companyDid || ""}
-                  onValueChange={(v) => setCompanyDid(v)}
-                >
+                <Select value={companyDid || ""} onValueChange={setCompanyDid}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder={companies.length ? "Seleziona azienda" : "Nessuna azienda trovata"} />
                   </SelectTrigger>
@@ -201,7 +209,6 @@ export default function AdminCreditsPage() {
                     )}
                   </SelectContent>
                 </Select>
-                {/* input libero fallback */}
                 <Input
                   className="w-[40%]"
                   placeholder="oppure DID manuale"
@@ -213,7 +220,12 @@ export default function AdminCreditsPage() {
             </div>
             <div className="grid content-end gap-2">
               <Button variant="secondary" onClick={refresh}>Carica</Button>
-              <Button variant="outline" onClick={handleSeedDemo} disabled={!companyDid || loading}>Seed crediti demo</Button>
+              <Button variant="outline" onClick={handleEnsureCompanyAccount} disabled={!companyDid || loading}>
+                Crea account azienda
+              </Button>
+              <Button variant="outline" onClick={handleSeedDemo} disabled={!companyDid || loading}>
+                Seed crediti demo
+              </Button>
             </div>
           </div>
 
@@ -221,12 +233,7 @@ export default function AdminCreditsPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
               <Label>Importo</Label>
-              <Input
-                type="number"
-                min={1}
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
-              />
+              <Input type="number" min={1} value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
             </div>
             <div className="grid content-end">
               <Button onClick={handleTopup} disabled={!companyAcc || loading}>Top-up azienda</Button>
@@ -242,12 +249,7 @@ export default function AdminCreditsPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
               <Label>Soglia low-balance azienda</Label>
-              <Input
-                type="number"
-                min={0}
-                value={threshold}
-                onChange={(e) => setThr(Number(e.target.value))}
-              />
+              <Input type="number" min={0} value={threshold} onChange={(e) => setThr(Number(e.target.value))} />
             </div>
             <div className="grid content-end">
               <Button variant="outline" onClick={handleThreshold} disabled={!companyAcc || loading}>
@@ -260,7 +262,7 @@ export default function AdminCreditsPage() {
             </div>
           </div>
 
-          {/* Storico */}
+          {/* Storico base (come prima) */}
           <div className="space-y-2">
             <div className="text-sm font-medium">Storico transazioni {companyAcc ? "(azienda)" : "(tutte)"} </div>
             <div className="border rounded">
@@ -288,12 +290,8 @@ export default function AdminCreditsPage() {
                       <td className="p-2 font-mono">{t.toAccountId || "—"}</td>
                       <td className="p-2 text-right">{t.amount}</td>
                       <td className="p-2">{(t as any).action || "—"}</td>
-                      <td className="p-2">
-                        {(t as any).ref ? JSON.stringify((t as any).ref) : "—"}
-                      </td>
-                      <td className="p-2">
-                        {(t as any).meta ? JSON.stringify((t as any).meta) : "—"}
-                      </td>
+                      <td className="p-2">{(t as any).ref ? JSON.stringify((t as any).ref) : "—"}</td>
+                      <td className="p-2">{(t as any).meta ? JSON.stringify((t as any).meta) : "—"}</td>
                     </tr>
                   ))}
                   {txs.length === 0 && (
@@ -303,6 +301,9 @@ export default function AdminCreditsPage() {
               </table>
             </div>
           </div>
+
+          {/* Storico avanzato con CSV */}
+          <CreditHistory />
         </CardContent>
       </Card>
     </div>
@@ -319,12 +320,10 @@ async function loadCompanies(): Promise<Company[]> {
 
 async function discoverCompaniesFromIdentity(): Promise<Company[]> {
   const api: any = IdentityApi as any;
-
   const nameCandidates = [
     "listCompanies","getCompanies","listOrganizations","getOrganizations",
     "listAllCompanies","listOrgs","companies","orgs","list"
   ];
-
   for (const name of nameCandidates) {
     const fn = api?.[name];
     if (typeof fn === "function") {

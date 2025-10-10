@@ -22,10 +22,14 @@ import { STORAGE_KEYS } from "@/utils/constants";
 type AccountsIndex = Record<string, CreditAccount>;
 type Meta = { version: number; counter: number };
 
+// -------- island buckets (allocazioni per isola) --------
+type IslandBuckets = Record<string /*companyId*/, Record<string /*islandId*/, number /*credits*/>>;
+
 const KEYS = {
   ACCOUNTS: (STORAGE_KEYS as any)?.CREDITS_ACCOUNTS ?? "trustup:credits:accounts",
   TX: (STORAGE_KEYS as any)?.CREDITS_TX ?? "trustup:credits:tx",
   META: (STORAGE_KEYS as any)?.CREDITS_META ?? "trustup:credits:meta",
+  ISLAND_BUCKETS: "trustup:credits:islandBuckets",
 };
 
 // ---------- storage utils ----------
@@ -75,6 +79,36 @@ function txId(prefix = "tx"): string {
   return `${prefix}_${Date.now()}_${bumpCounter()}`;
 }
 
+// decimals helper
+function round6(n: number) {
+  return Math.round((n + Number.EPSILON) * 1e6) / 1e6;
+}
+
+// ---------- island bucket helpers ----------
+function loadIslandBuckets(): IslandBuckets {
+  return readJSON<IslandBuckets>(KEYS.ISLAND_BUCKETS, {});
+}
+function saveIslandBuckets(b: IslandBuckets) {
+  writeJSON(KEYS.ISLAND_BUCKETS, b);
+}
+export function getIslandBudget(companyId: string, islandId: string): number {
+  const b = loadIslandBuckets();
+  return b[companyId]?.[islandId] ?? 0;
+}
+export function setIslandBudget(companyId: string, islandId: string, amount: number) {
+  if (!(Number.isFinite(amount) && amount >= 0)) throw new Error("amount non valido");
+  const b = loadIslandBuckets();
+  if (!b[companyId]) b[companyId] = {};
+  b[companyId][islandId] = round6(amount);
+  saveIslandBuckets(b);
+}
+export function addToIslandBudget(companyId: string, islandId: string, delta: number) {
+  const cur = getIslandBudget(companyId, islandId);
+  const next = cur + delta;
+  if (next < 0) throw new Error("budget isola insufficiente");
+  setIslandBudget(companyId, islandId, round6(next));
+}
+
 // ---------- identity helpers ----------
 export function getAccountId(ownerType: AccountOwnerType, ownerId: string): string {
   return `acc:${ownerType}:${ownerId}`;
@@ -88,6 +122,12 @@ function mustAccount(id: string): CreditAccount {
   const acc = loadAccounts()[id];
   if (!acc) throw new Error(`Account non trovato: ${id}`);
   return acc;
+}
+function splitAccountId(accId: string): { ownerType?: AccountOwnerType; ownerId?: string } {
+  // acc:<type>:<id>
+  const parts = accId?.split(":");
+  if (parts?.length === 3) return { ownerType: parts[1] as AccountOwnerType, ownerId: parts[2] };
+  return {};
 }
 
 // ---------- bootstrap / ensure ----------
@@ -282,15 +322,17 @@ export function topup(toAccountId: string, amount: number, meta?: any): CreditTx
   const prevMeta = loadMeta();
   const accounts = { ...loadAccounts() };
   const acc = mustAccount(toAccountId);
+  const ts = nowISO();
+  const nextBalance = acc.balance + amount;
   const tx: CreditTx = {
     id: txId("topup"),
-    ts: nowISO(),
+    ts,
     type: "topup",
     toAccountId,
     amount,
-    meta,
+    meta: { ...meta, postBalance: nextBalance, lowBalance: nextBalance <= (acc.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD) },
   };
-  accounts[toAccountId] = { ...acc, balance: acc.balance + amount, updatedAt: tx.ts };
+  accounts[toAccountId] = { ...acc, balance: nextBalance, updatedAt: ts };
   const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
   if (!ok) throw new Error("Race condition nel salvataggio topup");
   return tx;
@@ -306,6 +348,8 @@ export function transfer(fromAccountId: string, toAccountId: string, amount: num
   if (from.balance < amount) throw new Error("Fondi insufficienti");
 
   const ts = nowISO();
+  const fromNext = from.balance - amount;
+  const toNext = to.balance + amount;
   const tx: CreditTx = {
     id: txId("transfer"),
     ts,
@@ -313,11 +357,17 @@ export function transfer(fromAccountId: string, toAccountId: string, amount: num
     fromAccountId,
     toAccountId,
     amount,
-    meta,
+    meta: {
+      ...meta,
+      postBalanceFrom: fromNext,
+      postBalanceTo: toNext,
+      lowBalanceFrom: fromNext <= (from.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD),
+      lowBalanceTo: toNext <= (to.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD),
+    },
   };
 
-  accounts[fromAccountId] = { ...from, balance: from.balance - amount, updatedAt: ts };
-  accounts[toAccountId] = { ...to, balance: to.balance + amount, updatedAt: ts };
+  accounts[fromAccountId] = { ...from, balance: fromNext, updatedAt: ts };
+  accounts[toAccountId] = { ...to, balance: toNext, updatedAt: ts };
 
   const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
   if (!ok) throw new Error("Race condition nel salvataggio transfer");
@@ -372,23 +422,31 @@ export function simulate(
   actor: ConsumeActor,
   qty = 1
 ): { cost: number; payer?: string; reason?: string } {
-  const cost = getActionCost(action, qty);
+  const cost = round6(getActionCost(action, qty));
   const res = resolvePayer(action, actor, cost);
   return { cost, payer: res.payerAccountId, reason: res.reason };
 }
 
+type ConsumeRef = {
+  kind?: string;
+  id?: string;
+  productId?: string;
+  eventId?: string;
+  islandId?: string;
+};
+
 export function consume(
   action: CreditAction,
   actor: ConsumeActor,
-  ref?: { kind: string; id: string },
+  ref?: ConsumeRef,
   qty = 1
 ): ConsumeResult {
   const unit = PRICE_TABLE[action];
-  if (!Number.isInteger(unit) || unit <= 0) {
+  if (!(typeof unit === "number" && unit > 0)) {
     return { ok: false, reason: "NO_PAYER", detail: `Prezzo non definito per ${action}` };
   }
-  const n = Number.isInteger(qty) && qty > 0 ? qty : 1;
-  const cost = unit * n;
+  const n = Number.isFinite(qty) && qty > 0 ? qty : 1;
+  const cost = round6(unit * n);
 
   const { payerAccountId, reason } = resolvePayer(action, actor, cost);
   if (!payerAccountId) {
@@ -402,19 +460,43 @@ export function consume(
     return { ok: false, reason: "INSUFFICIENT_FUNDS", detail: { payerAccountId, cost, balance: payer.balance } };
   }
 
-  const ts = nowISO();
-  const tx: CreditTx = {
-    id: txId("consume"),
-    ts,
-    type: "consume",
-    fromAccountId: payerAccountId,
-    amount: cost,
-    action,
-    ref,
-    meta: { actor },
-  };
+  // Island bucket charge (solo se payer è company e abbiamo islandId)
+  let islandBucketCharged = false;
+  if (ref?.islandId) {
+    const { ownerType, ownerId } = splitAccountId(payerAccountId);
+    const payerIsCompany = ownerType === "company" && ownerId;
+    if (payerIsCompany) {
+      const companyId = ownerId as string;
+      const cur = getIslandBudget(companyId, ref.islandId);
+      if (cur >= cost) {
+        addToIslandBudget(companyId, ref.islandId, -cost);
+        islandBucketCharged = true;
+      }
+      // se insufficiente, fallback: paghi uguale dal conto company senza toccare bucket
+    }
+  }
 
-  accounts[payerAccountId] = { ...payer, balance: payer.balance - cost, updatedAt: ts };
+  const ts = nowISO();
+  const nextBalance = round6(payer.balance - cost);
+  const low = nextBalance <= (payer.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD);
+
+    const tx: CreditTx = {
+     id: txId("consume"),
+     ts,
+     type: "consume",
+     fromAccountId: payerAccountId,
+     amount: cost,
+     action,
+         meta: {
+         actor,
+            ref, 
+    postBalance: nextBalance,
+    lowBalance: low,
+    islandBucketCharged,
+  },
+};
+
+  accounts[payerAccountId] = { ...payer, balance: nextBalance, updatedAt: ts };
 
   const ok = persistAccountsAndTx(accounts, [tx], prevMeta);
   if (!ok) return { ok: false, reason: "NO_PAYER", detail: "Race condition nel salvataggio consume" };
@@ -428,4 +510,5 @@ export function __resetAll() {
   writeJSON(KEYS.ACCOUNTS, {});
   writeJSON(KEYS.TX, []);
   writeJSON(KEYS.META, { version: 0, counter: 0 } as Meta);
+  writeJSON(KEYS.ISLAND_BUCKETS, {});
 }

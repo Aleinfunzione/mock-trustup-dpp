@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { useEvents } from "@/hooks/useEvents";
 import type { UIEvent } from "@/hooks/useEvents";
+import { costOf } from "@/services/orchestration/creditsPublish";
 
 type Filters = {
   islandId?: string;
@@ -19,6 +20,14 @@ type Props = {
   /** Filtri opzionali: per isola e/o assegnatario */
   filters?: Filters;
 };
+
+function fmtCredits(n: number) {
+  if (!Number.isFinite(n)) return String(n);
+  const s = n.toFixed(3);
+  return s.replace(/\.?0+$/, "");
+}
+
+const EVENT_CREATE_COST = costOf("EVENT_CREATE" as any);
 
 export default function EventTimeline({
   productId,
@@ -126,6 +135,11 @@ export default function EventTimeline({
               const scope = (e as any).data?.scope as "product" | "bom" | undefined;
               const targetLabel = (e as any).data?.targetLabel as string | undefined;
               const islandId = (e as any).data?.islandId as string | undefined;
+              const txRef =
+                (e as any).data?.txRef ||
+                (e as any).data?.txId ||
+                (e as any).meta?.txId ||
+                undefined;
 
               return (
                 <li key={e.id} className="mb-10 ms-6">
@@ -147,6 +161,8 @@ export default function EventTimeline({
                     )}
                     {islandId && <Badge variant="outline">Isola: {islandId}</Badge>}
                     {e.assignedToDid && <Badge variant="outline">→ {e.assignedToDid}</Badge>}
+                    <Badge variant="outline">Costo: {fmtCredits(EVENT_CREATE_COST)} cr</Badge>
+                    {txRef && <Badge variant="outline" title={String(txRef)}>tx: <span className="font-mono">{String(txRef)}</span></Badge>}
                   </div>
 
                   {e.notes && <p className="mt-2 text-sm">{e.notes}</p>}

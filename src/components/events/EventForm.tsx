@@ -29,6 +29,9 @@ import { listAssignments } from "@/stores/orgStore";
 // isole: fonte unica = companyAttributes
 import { getCompanyAttrs } from "@/services/api/companyAttributes";
 
+// annotazione tx
+import { annotateTx } from "@/stores/creditTx";
+
 type EventFormProps = {
   defaultProductId?: string;
   assignedToDid?: string;
@@ -107,6 +110,12 @@ function actorLabel(a: Actor) {
   return `${name} — ${a.did}${role}`;
 }
 
+function fmtCredits(n: number) {
+  if (!Number.isFinite(n)) return String(n);
+  const s = n.toFixed(3);
+  return s.replace(/\.?0+$/, "");
+}
+
 export default function EventForm({
   defaultProductId,
   assignedToDid,
@@ -141,6 +150,7 @@ export default function EventForm({
   const eventCost = costOf("EVENT_CREATE" as any);
 
   const [submitting, setSubmitting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   const listMineRef = useRef(listMine);
   useEffect(() => {
@@ -171,8 +181,7 @@ export default function EventForm({
 
   useEffect(() => {
     if (!defaultProductId && !productId && products.length > 0) setProductId(products[0].id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [products, defaultProductId]);
+  }, [products, defaultProductId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!productId) {
@@ -218,6 +227,7 @@ export default function EventForm({
     })();
   }, [currentUser?.companyDid, currentUser?.did, targetKind, islandId, productIslandId]);
 
+  // credito disponibile
   useEffect(() => {
     let alive = true;
     async function checkCredits() {
@@ -261,6 +271,101 @@ export default function EventForm({
     (scope === "product" || (scope === "bom" && targetNodeId.length > 0)) &&
     targetValid;
 
+  async function buildActor(): Promise<ConsumeActor | null> {
+    if (!currentUser?.did) return null;
+    const u = currentUser as any;
+    return {
+      ownerType: (currentUser?.role ?? "company") as AccountOwnerType,
+      ownerId: (u?.id ?? u?.did) as string,
+      companyId: (u?.companyId ?? u?.companyDid) as string | undefined,
+    };
+  }
+
+  async function attemptFlow(): Promise<string | null> {
+    const actor = await buildActor();
+    if (!actor) {
+      toast({ title: "Utente non autenticato", description: "Effettua il login.", variant: "destructive" });
+      return null;
+    }
+    const targetMeta = scope === "bom" ? bomOptions.find((o) => o.id === targetNodeId) || null : null;
+    const assigned = assignedToDid || (targetKind === "member" ? assignee : undefined);
+    const chosenIslandId =
+      targetKind === "island" && islandId ? islandId : productIslandId || undefined;
+
+    const ok = await canAfford("EVENT_CREATE" as any, actor);
+    if (!ok) {
+      setCanPay(false);
+      throw Object.assign(new Error("Crediti insufficienti"), { code: "INSUFFICIENT_CREDITS" });
+    }
+
+    // consume → txRef
+    const consumeRes: any = await consume(
+      "EVENT_CREATE" as any,
+      actor,
+      {
+        kind: "event",
+        productId,
+        type: effectiveType,
+        scope,
+        nodeId: scope === "bom" ? targetNodeId : undefined,
+        targetPath: scope === "bom" ? targetMeta?.path : undefined,
+        targetLabel: scope === "bom" ? targetMeta?.label : undefined,
+        islandId: chosenIslandId,
+        assignedToDid: assigned,
+      }
+    );
+    const txRef: string | undefined = consumeRes?.tx?.id;
+
+    // create event → salva txRef e poi annota tx con eventId
+    const evt = await createEvent({
+      productId,
+      companyDid: currentUser!.companyDid ?? currentUser!.did,
+      actorDid: currentUser!.did,
+      type: effectiveType,
+      notes: notes.trim() || undefined,
+      assignedToDid: assigned,
+      ...( {
+        data: {
+          scope,
+          targetNodeId: scope === "bom" ? targetNodeId : undefined,
+          targetPath: scope === "bom" ? targetMeta?.path : undefined,
+          targetLabel: scope === "bom" ? targetMeta?.label : undefined,
+          islandId: chosenIslandId,
+          txRef,
+        },
+      } as any ),
+    });
+
+    if (txRef) {
+      try {
+        annotateTx(txRef, { ref: { eventId: evt.id, productId, islandId: chosenIslandId } });
+      } catch {
+        // best-effort
+      }
+    }
+
+    toast({
+      title: "Evento registrato",
+      description:
+        `#${evt.id} • ${effectiveType}` +
+        (scope === "bom" && targetMeta?.label ? ` • BOM: ${targetMeta.label}` : "") +
+        (chosenIslandId ? ` • Isola: ${chosenIslandId}` : "") +
+        ` • costo ${fmtCredits(eventCost)} crediti`,
+    });
+
+    if (!defaultProductId) setProductId("");
+    setEventType("");
+    setCustomType("");
+    setNotes("");
+    setScope("product");
+    setTargetNodeId("");
+    setAssignee("");
+    if (targetKind === "island") setIslandId("");
+
+    onCreated?.(evt.id);
+    return evt.id;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -280,85 +385,19 @@ export default function EventForm({
       toast({ title: "Seleziona un nodo della BOM", variant: "destructive" });
       return;
     }
-    if (!targetValid) {
+    if (
+      !(
+        !!assignedToDid ||
+        (targetKind === "member" ? assignee.length > 0 : islandId.length > 0)
+      )
+    ) {
       toast({ title: "Seleziona destinatario", description: "Membro/macchina oppure un’isola.", variant: "destructive" });
       return;
     }
 
     setSubmitting(true);
     try {
-      const u = currentUser as any;
-      const actor: ConsumeActor = {
-        ownerType: (currentUser?.role ?? "company") as AccountOwnerType,
-        ownerId: (u?.id ?? u?.did) as string,
-        companyId: (u?.companyId ?? u?.companyDid) as string | undefined,
-      };
-
-      const ok = await canAfford("EVENT_CREATE" as any, actor);
-      if (!ok) {
-        setCanPay(false);
-        throw Object.assign(new Error("Crediti insufficienti"), { code: "INSUFFICIENT_CREDITS" });
-      }
-
-      const targetMeta = scope === "bom" ? bomOptions.find((o) => o.id === targetNodeId) || null : null;
-
-      const assigned = assignedToDid || (targetKind === "member" ? assignee : undefined);
-      const chosenIslandId =
-        targetKind === "island" && islandId ? islandId : productIslandId || undefined;
-
-      await consume(
-        "EVENT_CREATE" as any,
-        actor,
-        {
-          kind: "event",
-          productId,
-          type: effectiveType,
-          scope,
-          nodeId: scope === "bom" ? targetNodeId : undefined,
-          targetPath: scope === "bom" ? targetMeta?.path : undefined,
-          targetLabel: scope === "bom" ? targetMeta?.label : undefined,
-          islandId: chosenIslandId,
-          assignedToDid: assigned,
-        }
-      );
-
-      const evt = await createEvent({
-        productId,
-        companyDid: currentUser.companyDid ?? currentUser.did,
-        actorDid: currentUser.did,
-        type: effectiveType,
-        notes: notes.trim() || undefined,
-        assignedToDid: assigned,
-        ...( {
-          data: {
-            scope,
-            targetNodeId: scope === "bom" ? targetNodeId : undefined,
-            targetPath: scope === "bom" ? targetMeta?.path : undefined,
-            targetLabel: scope === "bom" ? targetMeta?.label : undefined,
-            islandId: chosenIslandId,
-          },
-        } as any ),
-      });
-
-      toast({
-        title: "Evento registrato",
-        description:
-          `#${evt.id} • ${effectiveType}` +
-          (scope === "bom" && targetMeta?.label ? ` • BOM: ${targetMeta.label}` : "") +
-          (chosenIslandId ? ` • Isola: ${chosenIslandId}` : "") +
-          ` • costo ${eventCost} crediti`,
-      });
-
-      if (!defaultProductId) setProductId("");
-      setEventType("");
-      setCustomType("");
-      setNotes("");
-      setScope("product");
-      setTargetNodeId("");
-      setAssignee("");
-      if (targetKind === "island") setIslandId("");
-
-      onCreated?.(evt.id);
+      await attemptFlow();
     } catch (err: any) {
       toast({
         title: "Impossibile creare l’evento",
@@ -367,6 +406,30 @@ export default function EventForm({
       });
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleRetry() {
+    setRetrying(true);
+    try {
+      const actor = await buildActor();
+      if (!actor) return;
+      const ok = await canAfford("EVENT_CREATE" as any, actor);
+      if (!ok) {
+        setCanPay(false);
+        toast({ title: "Saldo ancora insufficiente", description: "Ricarica il conto o cambia sponsor." , variant: "destructive" });
+        return;
+      }
+      setCanPay(true);
+      await attemptFlow();
+    } catch (err: any) {
+      toast({
+        title: "Riprova fallita",
+        description: err?.message ?? "Errore inatteso",
+        variant: "destructive",
+      });
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -573,12 +636,19 @@ export default function EventForm({
 
           <CardFooter className="px-0 flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div className="text-xs text-muted-foreground">
-              Costo azione: <span className="font-mono">{eventCost}</span> crediti
+              Costo azione: <span className="font-mono">{fmtCredits(eventCost)}</span> crediti
               {!canPay && <span className="text-destructive ml-2">• crediti insufficienti</span>}
             </div>
-            <Button type="submit" className="w-full sm:w-auto" disabled={!canSubmit || submitting}>
-              {submitting ? "Salvataggio…" : "Registra evento"}
-            </Button>
+            <div className="flex gap-2 w-full sm:w-auto">
+              {!canPay && (
+                <Button type="button" variant="outline" onClick={handleRetry} disabled={retrying}>
+                  {retrying ? "Verifica credito…" : "Riprova pagamento"}
+                </Button>
+              )}
+              <Button type="submit" className="w-full sm:w-auto" disabled={!canSubmit || submitting}>
+                {submitting ? "Salvataggio…" : "Registra evento"}
+              </Button>
+            </div>
           </CardFooter>
         </form>
       </CardContent>
