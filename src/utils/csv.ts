@@ -32,9 +32,7 @@ function toStringCell(v: CsvCell): string {
 }
 
 function escapeCellRaw(s: string, sep: string, safeExcel: boolean): string {
-  // Excel/Sheets formula injection guard
   if (safeExcel && DANGEROUS_PREFIX.test(s)) s = `'` + s;
-
   const needsQuote = s.includes('"') || s.includes("\n") || s.includes("\r") || s.includes(sep);
   if (!needsQuote) return s;
   return `"${s.replace(/"/g, '""')}"`;
@@ -116,5 +114,54 @@ export function downloadCsvFromObjects<T extends Record<string, any>>(
   options?: CsvOptions
 ): void {
   const csv = toCsvFromObjects(items, columns, options);
+  downloadCsvString(filename, csv);
+}
+
+/* -------- Helpers dedicati al credito -------- */
+import type { CreditTx } from "@/types/credit";
+
+/** Colonne standard richieste per l’export transazioni crediti. */
+export const CREDIT_TX_COLUMNS = [
+  { key: "ts", header: "ts", map: (v: any, it: CreditTx) => it.ts },
+  { key: "type", header: "type", map: (v: any, it: CreditTx) => it.type },
+  { key: "fromAccountId", header: "fromAccountId", map: (v: any, it: CreditTx) => (it as any).fromAccountId ?? "" },
+  { key: "toAccountId", header: "toAccountId", map: (v: any, it: CreditTx) => (it as any).toAccountId ?? "" },
+  { key: "amount", header: "amount", map: (v: any, it: CreditTx) => (it.amount ?? "") as any },
+  {
+    key: "productId",
+    header: "productId",
+    map: (v: any, it: CreditTx) => (it.meta?.ref?.productId ?? (it as any).ref?.productId ?? "") as any,
+  },
+  {
+    key: "eventId",
+    header: "eventId",
+    map: (v: any, it: CreditTx) => (it.meta?.ref?.eventId ?? (it as any).ref?.eventId ?? "") as any,
+  },
+  {
+    key: "actorDid",
+    header: "actorDid",
+    map: (v: any, it: CreditTx) =>
+      (it.meta?.ref?.actorDid ?? it.meta?.actor?.ownerId ?? (it as any).ref?.actorDid ?? "") as any,
+  },
+  {
+    key: "balance_after",
+    header: "balance_after",
+    map: (v: any, it: CreditTx) =>
+      (it.meta?.balance_after ??
+        it.meta?.postBalance ??
+        it.meta?.postBalanceFrom ??
+        it.meta?.postBalanceTo ??
+        "") as any,
+  },
+] as const;
+
+/** Genera CSV per transazioni crediti con le colonne standard. */
+export function toCsvForCreditTx(items: CreditTx[], options?: CsvOptions): string {
+  return toCsvFromObjects(items, CREDIT_TX_COLUMNS as any, options);
+}
+
+/** Scarica CSV per transazioni crediti. */
+export function downloadCreditTxCsv(filename: string, items: CreditTx[], options?: CsvOptions): void {
+  const csv = toCsvForCreditTx(items, options);
   downloadCsvString(filename, csv);
 }

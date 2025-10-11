@@ -13,13 +13,11 @@ import {
   getBalances,
   topupAccount,
   transferBetween,
-  listTransactions,
   setThreshold,
 } from "@/services/api/credits";
-import type { CreditTx } from "@/types/credit";
 import CreditsBadge from "@/components/credit/CreditsBadge";
 import CreditHistory from "@/components/credit/CreditHistory";
-import { ensureCompanyAccount } from "@/stores/creditStore"; // nuovo
+import { ensureCompanyAccount } from "@/stores/creditStore";
 
 // sorgenti possibili per le aziende
 import * as IdentityApi from "@/services/api/identity";
@@ -39,7 +37,6 @@ export default function AdminCreditsPage() {
   const [balances, setBalances] = React.useState<Record<string, Bal>>({});
   const [amount, setAmount] = React.useState<number>(50);
   const [threshold, setThr] = React.useState<number>(10);
-  const [txs, setTxs] = React.useState<CreditTx[]>([]);
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
@@ -55,7 +52,6 @@ export default function AdminCreditsPage() {
     if (!companyDid) {
       setCompanyAcc("");
       setBalances({});
-      setTxs(listTransactions({ limit: 100 }).slice().reverse());
       return;
     }
     const cAcc = accountId("company", companyDid);
@@ -65,7 +61,6 @@ export default function AdminCreditsPage() {
       return m;
     }, {});
     setBalances(list);
-    setTxs(listTransactions({ accountId: cAcc, limit: 100 }).slice().reverse());
   }, [adminAcc, companyDid]);
 
   React.useEffect(() => {
@@ -177,7 +172,7 @@ export default function AdminCreditsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="text-xs text-muted-foreground">
-            Top-up: accredita direttamente all’azienda. Transfer: sposta da Admin → Azienda. Soglia definisce il limite low-balance.
+            Top-up accredita direttamente all’azienda. Transfer sposta da Admin → Azienda. Soglia definisce il limite low-balance.
           </div>
 
           {/* Badges */}
@@ -262,47 +257,7 @@ export default function AdminCreditsPage() {
             </div>
           </div>
 
-          {/* Storico base (come prima) */}
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Storico transazioni {companyAcc ? "(azienda)" : "(tutte)"} </div>
-            <div className="border rounded">
-              <table className="w-full text-xs">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="p-2 text-left">#</th>
-                    <th className="p-2 text-left">Tipo</th>
-                    <th className="p-2 text-left">Data</th>
-                    <th className="p-2 text-left">From</th>
-                    <th className="p-2 text-left">To</th>
-                    <th className="p-2 text-right">Δ</th>
-                    <th className="p-2 text-left">Action</th>
-                    <th className="p-2 text-left">Ref</th>
-                    <th className="p-2 text-left">Meta</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {txs.map((t) => (
-                    <tr key={t.id} className="border-t">
-                      <td className="p-2 font-mono">{t.id.slice(0, 8)}</td>
-                      <td className="p-2">{t.type}</td>
-                      <td className="p-2">{new Date(t.ts).toLocaleString()}</td>
-                      <td className="p-2 font-mono">{t.fromAccountId || "—"}</td>
-                      <td className="p-2 font-mono">{t.toAccountId || "—"}</td>
-                      <td className="p-2 text-right">{t.amount}</td>
-                      <td className="p-2">{(t as any).action || "—"}</td>
-                      <td className="p-2">{(t as any).ref ? JSON.stringify((t as any).ref) : "—"}</td>
-                      <td className="p-2">{(t as any).meta ? JSON.stringify((t as any).meta) : "—"}</td>
-                    </tr>
-                  ))}
-                  {txs.length === 0 && (
-                    <tr><td className="p-2 text-muted-foreground" colSpan={9}>Nessuna transazione</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Storico avanzato con CSV */}
+          {/* Storico avanzato + Export CSV */}
           <CreditHistory />
         </CardContent>
       </Card>
