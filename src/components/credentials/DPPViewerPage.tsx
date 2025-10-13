@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/stores/authStore";
 import { getProductById } from "@/services/api/products";
 import { canAfford, costOf, publishVPWithCredits } from "@/services/orchestration/creditsPublish";
+import { useToast } from "@/components/ui/use-toast";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type PublishResult = {
   vpId?: string;
@@ -20,6 +22,7 @@ type PublishResult = {
 export default function DPPViewerPage() {
   const { id: productId } = useParams<{ id: string }>();
   const { currentUser } = useAuthStore();
+  const { toast } = useToast();
 
   const [productName, setProductName] = React.useState<string>("");
   const [busy, setBusy] = React.useState(false);
@@ -80,6 +83,16 @@ export default function DPPViewerPage() {
     }
   }
 
+  function copy(value: unknown, label: string) {
+    try {
+      const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      navigator.clipboard.writeText(text ?? "");
+      toast({ title: "Copiato", description: `${label} copiato negli appunti` });
+    } catch {
+      toast({ title: "Copia non riuscita", variant: "destructive" });
+    }
+  }
+
   if (!productId) {
     return (
       <Card>
@@ -94,7 +107,15 @@ export default function DPPViewerPage() {
     );
   }
 
-  const vpId = result?.vpId || (result as any)?.id || (result?.vp && (result.vp.id || result.vp.vpId));
+  const vpId =
+    result?.vpId ||
+    (result as any)?.id ||
+    (result?.vp && (result.vp.id || result.vp.vpId));
+
+  const issuer = (result?.vp as any)?.issuer ?? (result as any)?.issuer;
+  const proofJws =
+    (result?.vp as any)?.proof?.jws ??
+    (result as any)?.proof?.jws;
 
   return (
     <div className="space-y-6">
@@ -107,9 +128,21 @@ export default function DPPViewerPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid sm:grid-cols-2 gap-3">
-            <div>
+            <div className="space-y-1">
               <Label>Product ID</Label>
-              <Input value={productId} readOnly className="font-mono" />
+              <div className="flex gap-2">
+                <Input value={productId} readOnly className="font-mono" />
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button type="button" variant="outline" onClick={() => copy(productId, "Product ID")}>
+                        Copia
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent><span className="text-xs">Copia Product ID</span></TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
             </div>
             <div className="self-end text-xs text-muted-foreground">
               Costo pubblicazione: <span className="font-mono">{vpCost}</span> crediti
@@ -125,9 +158,14 @@ export default function DPPViewerPage() {
               {busy ? "Pubblico…" : "Genera e pubblica VP"}
             </Button>
             {vpId && (
-              <Button asChild variant="secondary">
-                <Link to={`/viewer/${encodeURIComponent(vpId)}`}>Apri viewer pubblico</Link>
-              </Button>
+              <>
+                <Button asChild variant="secondary">
+                  <Link to={`/viewer/${encodeURIComponent(vpId)}`}>Apri viewer pubblico</Link>
+                </Button>
+                <Button variant="outline" onClick={() => copy(vpId, "VP ID")}>
+                  Copia VP ID
+                </Button>
+              </>
             )}
           </div>
 
@@ -148,8 +186,39 @@ export default function DPPViewerPage() {
               )}
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {issuer && (
+                <Button variant="outline" onClick={() => copy(issuer, "Issuer")}>
+                  Copia issuer
+                </Button>
+              )}
+              {proofJws && (
+                <Button variant="outline" onClick={() => copy(proofJws, "Proof JWS")}>
+                  Copia proof JWS
+                </Button>
+              )}
+              {result?.creditTx?.id && (
+                <Button variant="outline" onClick={() => copy(result.creditTx.id, "Tx ID")}>
+                  Copia tx id
+                </Button>
+              )}
+              {result?.payerAccountId && (
+                <Button variant="outline" onClick={() => copy(result.payerAccountId, "Payer account")}>
+                  Copia payer
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => copy(result, "Risultato")}>
+                Copia JSON risultato
+              </Button>
+              {result?.vp && (
+                <Button variant="outline" onClick={() => copy(result.vp, "VP JSON")}>
+                  Copia VP JSON
+                </Button>
+              )}
+            </div>
+
+            <pre className="font-mono text-xs p-3 rounded border overflow-auto bg-muted/30">
 {JSON.stringify(result, null, 2)}
             </pre>
           </CardContent>

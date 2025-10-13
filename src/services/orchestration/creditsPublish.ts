@@ -14,17 +14,28 @@ const O = Orchestrator as unknown as Orch;
 
 export type ActionCode = keyof typeof PRICE_TABLE;
 
+export const CREDIT_ERROR_I18N_KEYS = {
+  INSUFFICIENT_CREDITS: "errors.publish.insufficientCredits",
+  POLICY_DENY: "errors.publish.policyDeny",
+  CHAIN_BLOCKED: "errors.publish.chainBlocked",
+  UNKNOWN: "errors.publish.unknown",
+} as const;
+export type CreditErrorCode = keyof typeof CREDIT_ERROR_I18N_KEYS;
+
 export class CreditError extends Error {
-  code: "INSUFFICIENT_CREDITS" | "CHAIN_BLOCKED" | "POLICY_DENY" | "UNKNOWN";
+  code: CreditErrorCode;
   details?: unknown;
-  constructor(code: CreditError["code"], message: string, details?: unknown) {
+  /** chiave i18n suggerita per la UI */
+  i18nKey: string;
+  constructor(code: CreditErrorCode, message: string, details?: unknown) {
     super(message);
     this.code = code;
     this.details = details;
+    this.i18nKey = CREDIT_ERROR_I18N_KEYS[code];
   }
 }
 
-function mapReasonToCode(reason: unknown): CreditError["code"] {
+function mapReasonToCode(reason: unknown): CreditErrorCode {
   const r = String(reason ?? "").toUpperCase();
   if (r.includes("INSUFFICIENT")) return "INSUFFICIENT_CREDITS";
   if (r.includes("CHAIN_BLOCKED") || r.includes("CHAIN")) return "CHAIN_BLOCKED";
@@ -39,6 +50,16 @@ function normalize(err: unknown): CreditError {
   if (msg.includes("CHAIN_BLOCKED") || msg.includes("CHAIN")) return new CreditError("CHAIN_BLOCKED", "Catena pagatore bloccata", e);
   if (msg.includes("POLICY")) return new CreditError("POLICY_DENY", "Policy crediti nega l’azione", e);
   return new CreditError("UNKNOWN", "Errore crediti", e);
+}
+
+export function creditErrorMessageKey(err: unknown): string {
+  if (err instanceof CreditError) return err.i18nKey;
+  try {
+    const code = mapReasonToCode((err as any)?.reason ?? (err as any)?.code ?? (err as any)?.message);
+    return CREDIT_ERROR_I18N_KEYS[code];
+  } catch {
+    return CREDIT_ERROR_I18N_KEYS.UNKNOWN;
+  }
 }
 
 function safeQty(qty?: number) {
@@ -68,12 +89,14 @@ export async function canAfford(action: ActionCode, actor: ConsumeActor, qty = 1
   }
 }
 
+type ConsumeOK = { ok: true; tx?: any; payerAccountId?: string; cost?: number; bucketId?: string };
+
 export async function consume(
   action: ActionCode,
   actor: ConsumeActor,
   meta?: Record<string, unknown>,
   qty = 1
-): Promise<{ ok: true; tx?: any; payerAccountId?: string } | never> {
+): Promise<ConsumeOK | never> {
   try {
     const _consume: any = consumeForAction as any;
     const res = await _consume(action, actor, meta, safeQty(qty));
@@ -81,7 +104,15 @@ export async function consume(
       const code = mapReasonToCode(res?.reason);
       throw new CreditError(code, String(res?.reason ?? "Errore consumo"), res);
     }
-    return res;
+    // Pass-through di cost/bucketId se disponibili dallo strato sottostante
+    const out: ConsumeOK = {
+      ok: true,
+      tx: (res as any)?.tx,
+      payerAccountId: (res as any)?.payerAccountId,
+      cost: (res as any)?.cost,
+      bucketId: (res as any)?.bucketId,
+    };
+    return out;
   } catch (e) {
     throw normalize(e);
   }

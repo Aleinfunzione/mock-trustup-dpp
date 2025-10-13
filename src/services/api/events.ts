@@ -8,6 +8,8 @@ import type {
   EventCreateInput,
   EventStatus,
 } from "@/types/event";
+// integrazione crediti (mock). Non crea dipendenze nuove nel repo.
+import * as creditStore from "@/stores/creditStore";
 
 /* ---------------- utils ---------------- */
 
@@ -72,6 +74,20 @@ function inRange(ts: string, from?: string, to?: string): boolean {
   return true;
 }
 
+// Mappa il tipo evento all'azione di credito
+function mapEventToCreditAction(t: string): string {
+  switch (String(t).toUpperCase()) {
+    case "ASSIGNMENT_CREATE":
+      return "ASSIGNMENT_CREATE";
+    case "TELEMETRY_PACKET":
+      return "TELEMETRY_PACKET";
+    case "MACHINE_AUTOCOMPLETE":
+      return "MACHINE_AUTOCOMPLETE";
+    default:
+      return "EVENT_CREATE";
+  }
+}
+
 /* ---------------- API principali ---------------- */
 
 /**
@@ -122,6 +138,57 @@ export function createEvent(
 
     related: i.related,
   };
+
+  // --- Consumo crediti + annotazioni costo/bucket (best-effort, non rompe la creazione evento) ---
+  try {
+    const islandForBilling = evt.islandId ?? evt.data?.islandId ?? null;
+    const ref: any = {
+      type: "event",
+      id: evt.id,
+      productId: evt.productId,
+      eventType: evt.type,
+      status: evt.status,
+    };
+
+    // `consume` è sincrona nel mock; se nel tuo store è async, adegueremo le API separatamente
+    const res: any =
+      typeof (creditStore as any)?.consume === "function"
+        ? (creditStore as any).consume({
+            companyId: evt.companyDid, // nel mock coincide con DID azienda
+            action: mapEventToCreditAction(evt.type as string),
+            ref,
+            islandId: islandForBilling,
+          })
+        : null;
+
+    if (res && res.ok) {
+      const cost = Number(res.cost);
+      const bucketId = res.bucketId as string | undefined;
+      const txId = (res.tx && (res.tx.id || res.tx.txId)) as string | undefined;
+
+      // top-level per consumo in UI
+      (evt as any).cost = Number.isFinite(cost) ? cost : undefined;
+      (evt as any).meta = {
+        ...(evt as any).meta,
+        islandBucketCharged: bucketId,
+        txId,
+      };
+
+      // mirror in payload per retro-compat/UI timeline
+      evt.data = {
+        ...(evt.data ?? {}),
+        billing: {
+          ...(evt.data?.billing ?? {}),
+          cost: (evt as any).cost,
+          islandBucketCharged: bucketId,
+          txId,
+        },
+        txRef: txId ?? evt.data?.txRef,
+      };
+    }
+  } catch {
+    // silenzioso: l'evento resta creato anche se il billing fallisce
+  }
 
   const map = getEventsMap();
   map[id] = evt;

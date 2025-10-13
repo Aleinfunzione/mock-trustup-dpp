@@ -1,15 +1,23 @@
 // src/components/layout/DashboardLayout.tsx
+import * as React from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
 import CreditBalance from "@/components/credit/CreditBalance";
 import { useAuthStore } from "@/stores/authStore";
 import LowBalanceWatcher from "@/components/credit/LowBalanceWatcher";
+import { prefetchOnIdle } from "@/services/schema/loader";
 
 export default function DashboardLayout() {
   const location = useLocation();
   const { currentUser } = useAuthStore();
   const isAdmin = (currentUser?.role || "").toLowerCase() === "admin";
+
+  // Prefetch schemi su mount, con cancel su unmount
+  React.useEffect(() => {
+    const cancel = prefetchOnIdle(); // usa registry di default
+    return () => cancel();
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col bg-background">

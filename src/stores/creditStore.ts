@@ -420,7 +420,7 @@ function findByDedup(dedup: string): CreditTx | undefined {
   return loadTx().find((t) => (t as any)?.meta?.dedup_key === dedup);
 }
 
-// ---------- simulate / consume ----------
+// ---------- sponsor/payer resolution ----------
 function resolvePayer(
   action: CreditAction,
   actor: ConsumeActor,
@@ -469,7 +469,8 @@ type ConsumeRef = {
   islandId?: string;
 };
 
-export function consume(
+// ---------------- core consume ----------------
+function __consumeCore(
   action: CreditAction,
   actor: ConsumeActor,
   ref?: ConsumeRef,
@@ -536,8 +537,29 @@ export function consume(
   if (!ok) return { ok: false, reason: "NO_PAYER", detail: "Race condition nel salvataggio consume" };
 
   maybeNotifyLow(nextPayer, ts);
-  const result: ConsumeResultOk = { ok: true, payerAccountId, tx };
-  return result;
+  const result: any = { ok: true, payerAccountId, tx, cost, bucketId: islandBucketCharged ? ref?.islandId : undefined };
+  return result as ConsumeResultOk;
+}
+
+// ---------- API pubblica consume ----------
+// Compat: supporta sia firma vecchia (posizionale) sia “a oggetto” usata in events.ts
+export function consume(
+  actionOrArgs: CreditAction | { companyId: string; action: CreditAction; ref?: ConsumeRef; islandId?: string },
+  actor?: ConsumeActor,
+  ref?: ConsumeRef,
+  qty = 1
+): ConsumeResult {
+  if (typeof actionOrArgs === "object" && (actionOrArgs as any).action) {
+    const args = actionOrArgs as { companyId: string; action: CreditAction; ref?: ConsumeRef; islandId?: string };
+    const a: ConsumeActor = {
+      ownerType: "company",
+      ownerId: args.companyId,
+      companyId: args.companyId,
+    } as any;
+    const r = { ...(args.ref ?? {}), islandId: args.islandId ?? args.ref?.islandId } as ConsumeRef;
+    return __consumeCore(args.action, a, r, 1);
+  }
+  return __consumeCore(actionOrArgs as CreditAction, actor as ConsumeActor, ref, qty);
 }
 
 // ---------- spend (idempotente) ----------
@@ -565,7 +587,9 @@ export function spend(
   if (dk) {
     const existing = findByDedup(dk);
     if (existing) {
-      return { ok: true, payerAccountId: (existing as any).fromAccountId, tx: existing } as ConsumeResultOk;
+      const bucketId =
+        (existing as any)?.meta?.islandBucketCharged ? (existing as any)?.meta?.ref?.islandId : undefined;
+      return { ok: true, payerAccountId: (existing as any).fromAccountId, tx: existing, cost, bucketId } as any;
     }
   }
 
@@ -625,8 +649,8 @@ export function spend(
   if (!ok) return { ok: false, reason: "NO_PAYER", detail: "Race condition nel salvataggio spend" };
 
   maybeNotifyLow(nextPayer, ts);
-  const result: ConsumeResultOk = { ok: true, payerAccountId, tx };
-  return result;
+  const result: any = { ok: true, payerAccountId, tx, cost, bucketId: islandBucketCharged ? ref?.islandId : undefined };
+  return result as ConsumeResultOk;
 }
 
 // ---------- maintenance ----------

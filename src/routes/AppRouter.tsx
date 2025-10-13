@@ -1,4 +1,4 @@
-// src/AppRouter.tsx
+// src/routes/AppRouter.tsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ROUTES } from "@/utils/constants";
 
@@ -19,7 +19,7 @@ import CompanyAttributesPage from "@/pages/company/CompanyAttributesPage";
 import CompanyCompliancePage from "@/pages/company/CompanyCompliancePage";
 import OrganizationCredentialPage from "@/pages/company/OrganizationCredentialPage";
 import CompanyCreditsPage from "@/pages/company/CompanyCreditsPage";
-import CompanyOrganizationPage from "@/pages/company/CompanyOrganizationPage"; // NEW
+import CompanyOrganizationPage from "@/pages/company/CompanyOrganizationPage";
 
 // Admin
 import AdminCreditsPage from "@/pages/admin/AdminCreditsPage";
@@ -29,12 +29,12 @@ import CreatorEventsPage from "@/pages/events/CreatorEventsPage";
 import CreatorProductsPage from "@/pages/products/CreatorProductsPage";
 import CreatorAttributesCatalogPage from "@/pages/creator/CreatorAttributesCatalogPage";
 
-// Prodotti (comuni a company/creator)
+// Prodotti
 import ProductsPage from "@/pages/products/ProductsPage";
 import ProductDetailPage from "@/pages/products/ProductDetailPage";
 import ProductAttributesPage from "@/pages/products/ProductAttributesPage";
 import ProductCredentialsPage from "@/pages/products/ProductCredentialsPage";
-import DPPViewerPage from "@/pages/products/DPPViewerPage";
+import DPPViewerPage from "@/components/credentials/DPPViewerPage"
 
 // Viewer VP
 import VPViewerPage from "@/pages/viewer/VPViewerPage";
@@ -99,7 +99,6 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* Organizzazione: Team + Isole */}
           <Route
             path="/company/org"
             element={
@@ -108,11 +107,9 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* Redirect legacy */}
           <Route path="/company/team" element={<Navigate to="/company/org?tab=team" replace />} />
           <Route path="/company/islands" element={<Navigate to="/company/org?tab=islands" replace />} />
 
-          {/* Credenziali org */}
           <Route
             path="/company/credentials"
             element={
@@ -121,7 +118,6 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* Crediti azienda */}
           <Route
             path="/company/credits"
             element={
@@ -130,7 +126,6 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-
           <Route
             path="/company/products"
             element={
@@ -230,7 +225,7 @@ export default function AppRouter() {
             }
           />
 
-          {/* VP Viewer (protetto) */}
+          {/* VP Viewer protetto */}
           <Route
             path="/viewer/:vpId"
             element={

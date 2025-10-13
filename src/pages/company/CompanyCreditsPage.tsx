@@ -21,6 +21,12 @@ import CreditHistory from "@/components/credit/CreditHistory";
 // ---- identity (fallback robusto)
 import * as IdentityApi from "@/services/api/identity";
 
+// ---- eventi per scoprire isole usate (seed editor)
+import { listEvents } from "@/services/api/events";
+
+// ---- bucket isole
+import { getIslandBudget, setIslandBudget } from "@/stores/creditStore";
+
 type Bal = { id: string; balance: number; low?: boolean };
 type Actor = {
   did: string;
@@ -67,6 +73,8 @@ async function loadCompanyActors(companyDid: string): Promise<Actor[]> {
   }
 }
 
+type IslandRow = { id: string; budget: number };
+
 export default function CompanyCreditsPage() {
   const { currentUser } = useAuthStore();
   const { toast } = useToast();
@@ -86,6 +94,10 @@ export default function CompanyCreditsPage() {
   const [balances, setBalances] = React.useState<Record<string, Bal>>({});
   const [loading, setLoading] = React.useState(false);
 
+  // --- Bucket isole editor state
+  const [islands, setIslands] = React.useState<IslandRow[]>([]);
+  const [newIslandId, setNewIslandId] = React.useState("");
+
   // carica membri dell'azienda
   React.useEffect(() => {
     if (!companyDid) return;
@@ -96,6 +108,31 @@ export default function CompanyCreditsPage() {
         setMemberType(roleToOwnerType(list[0].role));
       }
     });
+  }, [companyDid]);
+
+  // seed iniziale isole da eventi dell'azienda
+  React.useEffect(() => {
+    if (!companyDid) return;
+    try {
+      const evts = listEvents({ companyDid });
+      const ids = Array.from(
+        new Set(
+          evts
+            .map((e: any) => e.islandId || e.data?.islandId)
+            .filter(Boolean) as string[]
+        )
+      );
+      const rows = ids.map((id) => ({ id, budget: getIslandBudget(companyDid, id) }));
+      setIslands(rows);
+    } catch {
+      // no-op
+    }
+  }, [companyDid]);
+
+  const refreshIslandBudgets = React.useCallback(() => {
+    setIslands((rows) =>
+      rows.map(({ id }) => ({ id, budget: getIslandBudget(companyDid, id) }))
+    );
   }, [companyDid]);
 
   // refresh bilanci
@@ -154,6 +191,34 @@ export default function CompanyCreditsPage() {
     }
   }
 
+  function addIslandRow() {
+    const id = newIslandId.trim();
+    if (!id) return;
+    if (islands.some((r) => r.id === id)) {
+      toast({ title: "Isola già presente", variant: "destructive" });
+      return;
+    }
+    setIslands((r) => [...r, { id, budget: getIslandBudget(companyDid, id) }]);
+    setNewIslandId("");
+  }
+
+  function updateIslandBudgetLocal(id: string, v: number) {
+    setIslands((rows) => rows.map((r) => (r.id === id ? { ...r, budget: v } : r)));
+  }
+
+  async function saveIslandBudget(id: string) {
+    try {
+      const row = islands.find((r) => r.id === id);
+      if (!row) return;
+      const b = Number.isFinite(row.budget) && row.budget >= 0 ? Math.floor(row.budget) : 0;
+      setIslandBudget(companyDid, id, b);
+      toast({ title: "Budget isola aggiornato", description: `Isola ${id} → ${b}` });
+      refreshIslandBudgets();
+    } catch (e: any) {
+      toast({ title: "Errore budget isola", description: e?.message ?? "Impossibile salvare", variant: "destructive" });
+    }
+  }
+
   const companyBal = balances[companyAcc]?.balance ?? 0;
   const memberBal = memberAcc ? balances[memberAcc]?.balance ?? 0 : undefined;
 
@@ -163,7 +228,7 @@ export default function CompanyCreditsPage() {
         <CardHeader>
           <CardTitle>Crediti azienda</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
           {/* Badges */}
           <div className="flex flex-wrap items-center gap-2">
             <CreditsBadge actor={{ ownerType: "company", ownerId: companyDid }} showActor={false} />
@@ -194,45 +259,63 @@ export default function CompanyCreditsPage() {
             </div>
           </div>
 
-          {/* Distribuzione ai membri */}
+          {/* ---------------- Bucket isole ---------------- */}
           <div className="space-y-2">
-            <Label>Trasferisci a membro (Creator / Operatore / Macchina)</Label>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="sm:col-span-2">
-                <Select value={memberDid} onValueChange={onSelectMember}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={members.length ? "Seleziona membro" : "Nessun membro disponibile"} />
-                  </SelectTrigger>
-                  <SelectContent className="z-[60]">
-                    {members.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">Nessun membro</div>
-                    ) : (
-                      members.map((m) => (
-                        <SelectItem key={m.did} value={m.did}>
-                          {(m.name || "Membro") + " — " + m.did + (m.role ? ` • ${m.role}` : "")}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-                <div className="text-xs text-muted-foreground mt-1 font-mono">{memberAcc || "—"}</div>
-              </div>
-              <div>
-                <Label>Importo</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={amount}
-                  onChange={(e) => setAmount(Number(e.target.value))}
-                />
-              </div>
-              <div className="sm:col-span-3 grid content-end">
-                <Button onClick={handleTransferToMember} disabled={!memberAcc || amount <= 0 || loading}>
-                  Trasferisci crediti al membro
-                </Button>
-              </div>
+            <Label>Allocazione crediti per isole</Label>
+            <div className="flex gap-2">
+              <Input
+                placeholder="ID isola"
+                value={newIslandId}
+                onChange={(e) => setNewIslandId(e.target.value)}
+                className="w-60"
+              />
+              <Button variant="outline" onClick={addIslandRow}>
+                Aggiungi isola
+              </Button>
             </div>
+
+            {islands.length === 0 ? (
+              <div className="text-xs text-muted-foreground">
+                Nessuna isola configurata. Aggiungi un ID per iniziare.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left text-muted-foreground">
+                    <tr>
+                      <th className="py-2 pr-3">Isola</th>
+                      <th className="py-2 pr-3">Budget attuale</th>
+                      <th className="py-2 pr-3">Imposta nuovo budget</th>
+                      <th className="py-2 pr-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {islands.map((r) => (
+                      <tr key={r.id}>
+                        <td className="py-1 pr-3 font-mono">{r.id}</td>
+                        <td className="py-1 pr-3 font-mono">{getIslandBudget(companyDid, r.id)}</td>
+                        <td className="py-1 pr-3">
+                          <Input
+                            type="number"
+                            min={0}
+                            value={r.budget}
+                            onChange={(e) => updateIslandBudgetLocal(r.id, Number(e.target.value))}
+                            className="w-40"
+                          />
+                        </td>
+                        <td className="py-1 pr-3">
+                          <Button size="sm" variant="outline" onClick={() => saveIslandBudget(r.id)}>
+                            Salva
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
+          {/* ---------------- /Bucket isole ---------------- */}
 
           {/* Storico crediti con filtri + Export CSV */}
           <CreditHistory />

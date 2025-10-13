@@ -28,7 +28,6 @@ function useTx(accountId?: string) {
 
 function toMsStart(d?: string) {
   if (!d) return undefined;
-  // yyyy-mm-dd -> local T00:00:00
   return new Date(`${d}T00:00:00`).getTime();
 }
 function toMsEnd(d?: string) {
@@ -142,12 +141,13 @@ export default function CreditHistory() {
               <th className="py-2 pr-3">Evt</th>
               <th className="py-2 pr-3">Actor</th>
               <th className="py-2 pr-3">Isola</th>
+              <th className="py-2 pr-3">Bucket</th>
               <th className="py-2 pr-3">Post bal.</th>
             </tr>
           </thead>
           <tbody className="divide-y">
             {filtered.length === 0 ? (
-              <tr><td className="py-4 text-muted-foreground" colSpan={11}>Nessuna transazione</td></tr>
+              <tr><td className="py-4 text-muted-foreground" colSpan={12}>Nessuna transazione</td></tr>
             ) : filtered.slice().reverse().map((x) => {
               const m: any = x.meta || {};
               const ref: any = m.ref || {};
@@ -157,6 +157,7 @@ export default function CreditHistory() {
                 m.postBalanceFrom ??
                 m.postBalanceTo ??
                 undefined;
+              const bucketCharged = m.islandBucketCharged ? "✓" : "";
               return (
                 <tr key={x.id} className="align-top">
                   <td className="py-1 pr-3 font-mono text-xs">{x.id}</td>
@@ -169,6 +170,7 @@ export default function CreditHistory() {
                   <td className="py-1 pr-3">{ref.eventId || ""}</td>
                   <td className="py-1 pr-3">{ref.actorDid || m.actor?.ownerId || ""}</td>
                   <td className="py-1 pr-3">{ref.islandId || ""}</td>
+                  <td className="py-1 pr-3" title="Addebito da bucket isola">{bucketCharged}</td>
                   <td className="py-1 pr-3">{post !== undefined ? fmt(post) : ""}</td>
                 </tr>
               );

@@ -7,6 +7,12 @@ import { useToast } from "@/components/ui/use-toast";
 import { useEvents } from "@/hooks/useEvents";
 import type { UIEvent } from "@/hooks/useEvents";
 import { costOf } from "@/services/orchestration/creditsPublish";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 type Filters = {
   islandId?: string;
@@ -27,7 +33,33 @@ function fmtCredits(n: number) {
   return s.replace(/\.?0+$/, "");
 }
 
-const EVENT_CREATE_COST = costOf("EVENT_CREATE" as any);
+function deriveCost(e: UIEvent): number | undefined {
+  const anyE = e as any;
+  const fromPayload =
+    anyE.cost ??
+    anyE.data?.cost ??
+    anyE.meta?.cost ??
+    anyE.data?.billing?.cost;
+  if (Number.isFinite(fromPayload)) return Number(fromPayload);
+
+  // fallback: prova mapping per tipo, poi EVENT_CREATE
+  const byType = Number(costOf((e.type as any) ?? "EVENT_CREATE"));
+  if (Number.isFinite(byType) && byType > 0) return byType;
+
+  const generic = Number(costOf("EVENT_CREATE" as any));
+  return Number.isFinite(generic) ? generic : undefined;
+}
+
+function deriveBucket(e: UIEvent): string | undefined {
+  const anyE = e as any;
+  return (
+    anyE.islandBucketCharged ??
+    anyE.meta?.islandBucketCharged ??
+    anyE.data?.islandBucketCharged ??
+    anyE.data?.billing?.islandBucketCharged ??
+    anyE.ref?.meta?.islandBucketCharged
+  );
+}
 
 export default function EventTimeline({
   productId,
@@ -141,6 +173,9 @@ export default function EventTimeline({
                 (e as any).meta?.txId ||
                 undefined;
 
+              const cost = deriveCost(e);
+              const bucketId = deriveBucket(e);
+
               return (
                 <li key={e.id} className="mb-10 ms-6">
                   <span className="absolute -start-3 flex h-6 w-6 items-center justify-center rounded-full bg-muted ring-8 ring-background">
@@ -161,8 +196,37 @@ export default function EventTimeline({
                     )}
                     {islandId && <Badge variant="outline">Isola: {islandId}</Badge>}
                     {e.assignedToDid && <Badge variant="outline">→ {e.assignedToDid}</Badge>}
-                    <Badge variant="outline">Costo: {fmtCredits(EVENT_CREATE_COST)} cr</Badge>
-                    {txRef && <Badge variant="outline" title={String(txRef)}>tx: <span className="font-mono">{String(txRef)}</span></Badge>}
+
+                    <TooltipProvider delayDuration={200}>
+                      {typeof cost === "number" && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline">Costo: {fmtCredits(cost)} cr</Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <span className="text-xs">Crediti addebitati per questa azione</span>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {bucketId && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="text-xs">
+                              bucket:{bucketId}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <span className="text-xs">Bucket isola addebitato</span>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </TooltipProvider>
+
+                    {txRef && (
+                      <Badge variant="outline" title={String(txRef)}>
+                        tx: <span className="font-mono">{String(txRef)}</span>
+                      </Badge>
+                    )}
                   </div>
 
                   {e.notes && <p className="mt-2 text-sm">{e.notes}</p>}
