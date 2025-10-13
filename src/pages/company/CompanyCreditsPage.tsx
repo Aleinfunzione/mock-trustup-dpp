@@ -10,13 +10,13 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   accountId,
   getBalances,
-  listTransactions,
   transferBetween,
   setThreshold,
-  ensureMemberAccount,          // NEW
+  ensureMemberAccount,
 } from "@/services/api/credits";
-import type { AccountOwnerType, CreditTx } from "@/types/credit";
+import type { AccountOwnerType } from "@/types/credit";
 import CreditsBadge from "@/components/credit/CreditsBadge";
+import CreditHistory from "@/components/credit/CreditHistory";
 
 // ---- identity (fallback robusto)
 import * as IdentityApi from "@/services/api/identity";
@@ -79,12 +79,11 @@ export default function CompanyCreditsPage() {
 
   const [members, setMembers] = React.useState<Actor[]>([]);
   const [memberDid, setMemberDid] = React.useState<string>("");
-  const [memberType, setMemberType] = React.useState<AccountOwnerType>("creator"); // derivato da ruolo
+  const [memberType, setMemberType] = React.useState<AccountOwnerType>("creator");
 
   const memberAcc = memberDid ? accountId(memberType, memberDid) : "";
 
   const [balances, setBalances] = React.useState<Record<string, Bal>>({});
-  const [txs, setTxs] = React.useState<CreditTx[]>([]);
   const [loading, setLoading] = React.useState(false);
 
   // carica membri dell'azienda
@@ -99,7 +98,7 @@ export default function CompanyCreditsPage() {
     });
   }, [companyDid]);
 
-  // refresh bilanci + storico (SOLO account azienda)
+  // refresh bilanci
   const refresh = React.useCallback(() => {
     if (!companyAcc) return;
     const ids = [companyAcc, memberAcc].filter(Boolean);
@@ -108,7 +107,6 @@ export default function CompanyCreditsPage() {
       return m;
     }, {});
     setBalances(list);
-    setTxs(listTransactions({ accountId: companyAcc, limit: 100 }).slice().reverse());
   }, [companyAcc, memberAcc]);
 
   React.useEffect(() => {
@@ -125,10 +123,7 @@ export default function CompanyCreditsPage() {
     if (!companyAcc || !memberAcc || amount <= 0) return;
     setLoading(true);
     try {
-      // Assicura l'esistenza dell'account del membro (creator/operator/machine/admin)
       await ensureMemberAccount(memberType, memberDid, 0);
-
-      // Esegue trasferimento
       transferBetween(companyAcc, memberAcc, Math.floor(amount), {
         reason: "company_to_member",
       });
@@ -239,45 +234,8 @@ export default function CompanyCreditsPage() {
             </div>
           </div>
 
-          {/* Storico SOLO azienda */}
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Storico azienda</div>
-            <div className="border rounded">
-              <table className="w-full text-xs">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="p-2 text-left">#</th>
-                    <th className="p-2 text-left">Tipo</th>
-                    <th className="p-2 text-left">Data</th>
-                    <th className="p-2 text-left">From</th>
-                    <th className="p-2 text-left">To</th>
-                    <th className="p-2 text-right">Δ</th>
-                    <th className="p-2 text-left">Action</th>
-                    <th className="p-2 text-left">Ref</th>
-                    <th className="p-2 text-left">Meta</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {txs.map((t) => (
-                    <tr key={t.id} className="border-t">
-                      <td className="p-2 font-mono">{t.id.slice(0, 8)}</td>
-                      <td className="p-2">{t.type}</td>
-                      <td className="p-2">{new Date(t.ts).toLocaleString()}</td>
-                      <td className="p-2 font-mono">{t.fromAccountId || "—"}</td>
-                      <td className="p-2 font-mono">{t.toAccountId || "—"}</td>
-                      <td className="p-2 text-right">{t.amount}</td>
-                      <td className="p-2">{(t as any).action || "—"}</td>
-                      <td className="p-2">{(t as any).ref ? JSON.stringify((t as any).ref) : "—"}</td>
-                      <td className="p-2">{(t as any).meta ? JSON.stringify((t as any).meta) : "—"}</td>
-                    </tr>
-                  ))}
-                  {txs.length === 0 && (
-                    <tr><td className="p-2 text-muted-foreground" colSpan={9}>Nessuna transazione</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          {/* Storico crediti con filtri + Export CSV */}
+          <CreditHistory />
         </CardContent>
       </Card>
     </div>

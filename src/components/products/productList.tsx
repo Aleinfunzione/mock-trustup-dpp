@@ -10,12 +10,12 @@ import { getActor } from "@/services/api/identity";
 import { listProductsByCompany, deleteProduct, publishDPP } from "@/services/api/products";
 import type { Product } from "@/types/product";
 
+// Filtro isole globale
+import { filterByIsland, subscribeIsland, getIslandFilter, type IslandFilterState } from "@/stores/uiStore";
+
 type Props = {
-  /** Facoltativo: callback per aprire il form di creazione (es. modal esterna) */
   onCreateNew?: () => void;
-  /** Facoltativo: se passato, usa questa callback invece del link per aprire il dettaglio */
   onOpenProduct?: (id: string) => void;
-  /** Sola lettura (es. vista Company) */
   readOnly?: boolean;
 };
 
@@ -29,7 +29,14 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Base path per dettaglio/attributi (fallback generico se ruolo non previsto)
+  // island filter state for re-render when it changes
+  const [island, setIsland] = useState<IslandFilterState>(getIslandFilter());
+
+  useEffect(() => {
+    return subscribeIsland((s) => setIsland(s));
+  }, []);
+
+  // Base path per dettaglio/attributi
   const basePath =
     currentUser?.role === "company"
       ? "/company/products"
@@ -51,17 +58,22 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyDid]);
 
+  const islanded = useMemo(
+    () => filterByIsland(items as Array<Product & { islandId?: string; data?: any }>),
+    [items, island.enabled, island.islandId]
+  );
+
   const filtered = useMemo(() => {
-    if (!q.trim()) return items;
+    if (!q.trim()) return islanded;
     const s = q.toLowerCase();
-    return items.filter(
+    return islanded.filter(
       (p) =>
         p.name.toLowerCase().includes(s) ||
         (p.sku ?? "").toLowerCase().includes(s) ||
         p.id.toLowerCase().includes(s) ||
         p.typeId.toLowerCase().includes(s)
     );
-  }, [items, q]);
+  }, [islanded, q]);
 
   async function handleDelete(id: string) {
     const ok = window.confirm("Eliminare questo prodotto?");
@@ -111,7 +123,6 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
                 <Label>Cerca</Label>
                 <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, SKU, ID, Tipo…" />
               </div>
-              {/* Mostra il bottone sola se c'è una callback (niente disabled) */}
               {!readOnly && onCreateNew && (
                 <div className="sm:ml-auto">
                   <Button onClick={onCreateNew}>Nuovo prodotto</Button>
@@ -123,61 +134,69 @@ export default function ProductList({ onCreateNew, onOpenProduct, readOnly }: Pr
             <div className="rounded-md border divide-y">
               {filtered.length === 0 ? (
                 <div className="p-4 text-sm text-muted-foreground">
-                  Nessun prodotto. {!readOnly && onCreateNew ? "Crea il primo con “Nuovo prodotto”." : ""}
+                  Nessun prodotto{island.enabled && island.islandId ? ` per l’isola ${island.islandId}.` : "."}{" "}
+                  {!readOnly && onCreateNew ? "Crea il primo con “Nuovo prodotto”." : ""}
                 </div>
               ) : (
-                filtered.map((p) => (
-                  <div key={p.id} className="p-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
-                    <div className="space-y-1">
-                      <div className="font-medium">
-                        {p.name} {p.sku ? <span className="text-muted-foreground">• {p.sku}</span> : null}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        ID: <span className="font-mono">{p.id}</span> • Tipo:{" "}
-                        <span className="font-mono">{p.typeId}</span>
-                      </div>
-                      {p.isPublished ? (
-                        <div className="text-xs text-green-500">
-                          Pubblicato • DPP: <span className="font-mono">{p.dppId}</span>
+                filtered.map((p) => {
+                  const islandId = (p as any).islandId as string | undefined;
+                  return (
+                    <div key={p.id} className="p-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                      <div className="space-y-1">
+                        <div className="font-medium">
+                          {p.name} {p.sku ? <span className="text-muted-foreground">• {p.sku}</span> : null}
                         </div>
-                      ) : (
-                        <div className="text-xs text-muted-foreground">Bozza</div>
-                      )}
-                      <div className="text-xs text-muted-foreground">
-                        Ultimo aggiornamento: {new Date(p.updatedAt).toLocaleString()}
+                        <div className="text-xs text-muted-foreground">
+                          ID: <span className="font-mono">{p.id}</span> • Tipo:{" "}
+                          <span className="font-mono">{p.typeId}</span>
+                          {islandId ? (
+                            <>
+                              {" "}
+                              • Isola: <span className="font-mono">{islandId}</span>
+                            </>
+                          ) : null}
+                        </div>
+                        {p.isPublished ? (
+                          <div className="text-xs text-green-500">
+                            Pubblicato • DPP: <span className="font-mono">{p.dppId}</span>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-muted-foreground">Bozza</div>
+                        )}
+                        <div className="text-xs text-muted-foreground">
+                          Ultimo aggiornamento: {new Date(p.updatedAt).toLocaleString()}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 justify-end">
+                        <Button asChild variant="outline">
+                          <Link to={`${basePath}/${p.id}/attributes`}>Caratteristiche</Link>
+                        </Button>
+
+                        {onOpenProduct ? (
+                          <Button variant="outline" onClick={() => onOpenProduct(p.id)}>
+                            Apri
+                          </Button>
+                        ) : (
+                          <Button asChild variant="outline">
+                            <Link to={`${basePath}/${p.id}`}>Apri</Link>
+                          </Button>
+                        )}
+
+                        {!readOnly && !p.isPublished && (
+                          <Button onClick={() => handlePublish(p.id)} disabled={busyId === p.id}>
+                            {busyId === p.id ? "Pubblico…" : "Pubblica DPP"}
+                          </Button>
+                        )}
+                        {!readOnly && (
+                          <Button variant="destructive" onClick={() => handleDelete(p.id)} disabled={busyId === p.id}>
+                            {busyId === p.id ? "Elimino…" : "Elimina"}
+                          </Button>
+                        )}
                       </div>
                     </div>
-
-                    <div className="flex gap-2 justify-end">
-                      {/* Caratteristiche & Credenziali */}
-                      <Button asChild variant="outline">
-                        <Link to={`${basePath}/${p.id}/attributes`}>Caratteristiche</Link>
-                      </Button>
-
-                      {/* Dettaglio (Apri) */}
-                      {onOpenProduct ? (
-                        <Button variant="outline" onClick={() => onOpenProduct(p.id)}>
-                          Apri
-                        </Button>
-                      ) : (
-                        <Button asChild variant="outline">
-                          <Link to={`${basePath}/${p.id}`}>Apri</Link>
-                        </Button>
-                      )}
-
-                      {!readOnly && !p.isPublished && (
-                        <Button onClick={() => handlePublish(p.id)} disabled={busyId === p.id}>
-                          {busyId === p.id ? "Pubblico…" : "Pubblica DPP"}
-                        </Button>
-                      )}
-                      {!readOnly && (
-                        <Button variant="destructive" onClick={() => handleDelete(p.id)} disabled={busyId === p.id}>
-                          {busyId === p.id ? "Elimino…" : "Elimina"}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 

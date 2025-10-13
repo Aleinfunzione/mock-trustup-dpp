@@ -19,6 +19,10 @@ import type { Product } from "@/types/product";
 import type { UIEvent } from "@/hooks/useEvents";
 import { costOf } from "@/services/orchestration/creditsPublish";
 
+// Filtro isole globale
+import IslandFilter from "@/components/common/IslandFilter";
+import { subscribeIsland, getIslandFilter } from "@/stores/uiStore";
+
 type Actor = { did: string; role?: string; displayName?: string; firstName?: string; lastName?: string; email?: string };
 type Island = { id: string; name: string };
 
@@ -38,7 +42,7 @@ export default function CompanyEventsPage() {
 
   // isole e attori
   const [islands, setIslands] = React.useState<Island[]>([]);
-  const [islandId, setIslandId] = React.useState<string>("");
+  const [islandId, setIslandId] = React.useState<string>(""); // pilotato da filtro globale
   const [actors, setActors] = React.useState<Actor[]>([]);
   const [assignedToDid, setAssignedToDid] = React.useState<string>("");
 
@@ -52,6 +56,20 @@ export default function CompanyEventsPage() {
   // cache per export
   const [cached, setCached] = React.useState<UIEvent[]>([]);
   const [loading, setLoading] = React.useState<boolean>(false);
+
+  // Sync island filter globale → stato locale
+  React.useEffect(() => {
+    const cur = getIslandFilter();
+    setIslandId(cur.enabled ? cur.islandId ?? "" : "");
+    return subscribeIsland((s) => {
+      setIslandId(s.enabled ? s.islandId ?? "" : "");
+    });
+  }, []);
+
+  // reset assegnatario quando cambia isola
+  React.useEffect(() => {
+    setAssignedToDid("");
+  }, [islandId]);
 
   // load prodotti
   React.useEffect(() => {
@@ -78,13 +96,7 @@ export default function CompanyEventsPage() {
 
     async function getCompanyActors(): Promise<Actor[]> {
       const api: any = IdentityApi as any;
-      const fns = [
-        "listCompanyMembers",
-        "listMembersByCompany",
-        "listByCompany",
-        "listMembers",
-        "list",
-      ];
+      const fns = ["listCompanyMembers", "listMembersByCompany", "listByCompany", "listMembers", "list"];
       for (const n of fns) {
         try {
           const fn = api?.[n];
@@ -212,14 +224,15 @@ export default function CompanyEventsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="text-xs text-muted-foreground">
-            Vista generale degli eventi sui prodotti aziendali. Applica filtri per Prodotto, Isola o Assegnatario.
+            Vista generale degli eventi sui prodotti aziendali. Filtro isola globale applicato.
           </div>
 
-          {/* Filtro prodotti */}
+          {/* Filtri principali: Prodotto • Isola globale • Assegnatario */}
           <div className="grid gap-3 sm:grid-cols-4">
             <div className="sm:col-span-1">
               <Input placeholder="Nome, SKU, ID, Tipo..." disabled />
             </div>
+
             <div>
               <Select value={productId} onValueChange={setProductId}>
                 <SelectTrigger aria-label="Prodotto">
@@ -236,19 +249,10 @@ export default function CompanyEventsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Select value={islandId} onValueChange={(v) => { setIslandId(v); setAssignedToDid(""); }}>
-                <SelectTrigger aria-label="Isola">
-                  <SelectValue placeholder="Tutte" />
-                </SelectTrigger>
-                <SelectContent className="z-[60]">
-                  <SelectItem value="">Tutte</SelectItem>
-                  {islands.map((i) => (
-                    <SelectItem key={i.id} value={i.id}>{i.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+
+            {/* Filtro isola globale */}
+            <IslandFilter />
+
             <div>
               <Select value={assignedToDid} onValueChange={setAssignedToDid}>
                 <SelectTrigger aria-label="Assegnatario">
