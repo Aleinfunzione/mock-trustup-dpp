@@ -6,7 +6,9 @@ import {
   ADMIN_INITIAL_CREDITS,
   COMPANY_DEFAULT_CREDITS,
   LOW_BALANCE_THRESHOLD,
+  CHARGE_POLICY,
 } from "@/config/creditPolicy";
+import type { ChargePolicy as ChargePolicyCfg } from "@/config/creditPolicy";
 import type {
   AccountOwnerType,
   CreditAction,
@@ -21,6 +23,22 @@ import { STORAGE_KEYS } from "@/utils/constants";
 
 type AccountsIndex = Record<string, CreditAccount>;
 type Meta = { version: number; counter: number };
+
+// -------- policy (configurabile) --------
+const DEFAULT_POLICY: ChargePolicyCfg = {
+  preferIsland: true,
+  preferActor: true,
+  fallbackOrder: ["actor", "company", "admin"],
+};
+export function getChargePolicy(): Required<ChargePolicyCfg> {
+  const raw = (CHARGE_POLICY ?? {}) as Partial<ChargePolicyCfg>;
+  const fp = raw.fallbackOrder?.length ? raw.fallbackOrder : DEFAULT_POLICY.fallbackOrder;
+  return {
+    preferIsland: raw.preferIsland ?? DEFAULT_POLICY.preferIsland!,
+    preferActor: raw.preferActor ?? DEFAULT_POLICY.preferActor!,
+    fallbackOrder: fp as Array<"actor" | "company" | "admin">,
+  };
+}
 
 // -------- island buckets (allocazioni per isola) --------
 type IslandBuckets = Record<string /*companyId*/, Record<string /*islandId*/, number /*credits*/>>;
@@ -418,33 +436,69 @@ function findByDedup(dedup: string): CreditTx | undefined {
   return loadTx().find((t) => (t as any)?.meta?.dedup_key === dedup);
 }
 
-// ---------- sponsor/payer resolution ----------
+// ---------- ref type ----------
+type ConsumeRef = {
+  kind?: string;
+  id?: string;
+  productId?: string;
+  eventId?: string;
+  islandId?: string;
+  assignedToDid?: string;
+  [k: string]: any;
+};
+
+// ---------- sponsor/payer resolution (policy-aware) ----------
+function buildChain(action: CreditAction, actor: ConsumeActor): string[] {
+  const rule: SponsorshipRule | undefined = SPONSORSHIP[action];
+  const cfg = getChargePolicy();
+  const order = (rule?.payerOrder?.length ? rule!.payerOrder : cfg.fallbackOrder) as Array<
+    "actor" | "company" | "admin"
+  >;
+  const out: string[] = [];
+  for (const who of order) {
+    if (who === "actor") out.push(getAccountId(actor.ownerType, actor.ownerId));
+    if (who === "company" && actor.companyId) out.push(getAccountId("company", actor.companyId));
+    if (who === "admin") {
+      const a = getAdminAccountId();
+      if (a) out.push(a);
+    }
+  }
+  return out;
+}
+
 function resolvePayer(
   action: CreditAction,
   actor: ConsumeActor,
-  cost: number
-): { payerAccountId?: string; reason?: "NO_PAYER" | "INSUFFICIENT_FUNDS" } {
-  const rule: SponsorshipRule | undefined = SPONSORSHIP[action];
-  if (!rule) return { reason: "NO_PAYER" };
-
+  cost: number,
+  ref?: ConsumeRef
+): { payerAccountId?: string; willChargeIslandBucket?: boolean; reason?: "NO_PAYER" | "INSUFFICIENT_FUNDS" } {
+  const cfg = getChargePolicy();
   const accounts = loadAccounts();
-  const chain = rule.payerOrder
-    .map((who) => {
-      if (who === "actor") return getAccountId(actor.ownerType, actor.ownerId);
-      if (who === "company") {
-        if (!actor.companyId) return undefined;
-        return getAccountId("company", actor.companyId);
-      }
-      if (who === "admin") return getAdminAccountId();
-      return undefined;
-    })
-    .filter(Boolean) as string[];
 
+  // priorità attore assegnato
+  if (cfg.preferActor && ref?.assignedToDid) {
+    const memberAcc = findMemberAccount(ref.assignedToDid);
+    if (memberAcc && (accounts[memberAcc]?.balance ?? 0) >= cost) {
+      return { payerAccountId: memberAcc, willChargeIslandBucket: false };
+    }
+  }
+
+  // priorità isola → require company payer + bucket capiente
+  if (cfg.preferIsland && ref?.islandId && actor.companyId) {
+    const companyAcc = getAccountId("company", actor.companyId);
+    const bal = accounts[companyAcc]?.balance ?? 0;
+    const islandBal = getIslandBudget(actor.companyId, ref.islandId);
+    if (bal >= cost && islandBal >= cost) {
+      return { payerAccountId: companyAcc, willChargeIslandBucket: true };
+    }
+  }
+
+  // fallback catena sponsor
+  const chain = buildChain(action, actor);
   if (chain.length === 0) return { reason: "NO_PAYER" };
-
   for (const accId of chain) {
     const bal = accounts[accId]?.balance ?? 0;
-    if (bal >= cost) return { payerAccountId: accId };
+    if (bal >= cost) return { payerAccountId: accId, willChargeIslandBucket: false };
   }
   return { reason: "INSUFFICIENT_FUNDS" };
 }
@@ -452,21 +506,18 @@ function resolvePayer(
 export function simulate(
   action: CreditAction,
   actor: ConsumeActor,
-  qty = 1
-): { cost: number; payer?: string; reason?: string } {
+  qty = 1,
+  ref?: ConsumeRef
+): { cost: number; payer?: string; reason?: string; willChargeIslandBucket?: boolean } {
   const cost = round6(getActionCost(action, qty));
-  const res = resolvePayer(action, actor, cost);
-  return { cost, payer: res.payerAccountId, reason: res.reason };
+  const res = resolvePayer(action, actor, cost, ref);
+  return {
+    cost,
+    payer: res.payerAccountId,
+    reason: res.reason,
+    willChargeIslandBucket: res.willChargeIslandBucket,
+  };
 }
-
-type ConsumeRef = {
-  kind?: string;
-  id?: string;
-  productId?: string;
-  eventId?: string;
-  islandId?: string;
-  assignedToDid?: string; // NEW
-};
 
 // ---------------- core consume ----------------
 function __consumeCore(
@@ -482,23 +533,10 @@ function __consumeCore(
   const n = Number.isFinite(qty) && qty > 0 ? qty : 1;
   const cost = round6(unit * n);
 
-  // 1) priorità membro assegnato
-  let payerAccountId: string | undefined;
-  if (ref?.assignedToDid) {
-    const memberAcc = findMemberAccount(ref.assignedToDid);
-    if (memberAcc) {
-      const bal = loadAccounts()[memberAcc]?.balance ?? 0;
-      if (bal >= cost) payerAccountId = memberAcc;
-    }
-  }
-
-  // 2) fallback catena sponsor
+  const res = resolvePayer(action, actor, cost, ref);
+  const payerAccountId = res.payerAccountId;
   if (!payerAccountId) {
-    const r = resolvePayer(action, actor, cost);
-    payerAccountId = r.payerAccountId;
-    if (!payerAccountId) {
-      return { ok: false, reason: r.reason ?? "NO_PAYER", detail: { action, actor, cost } };
-    }
+    return { ok: false, reason: res.reason ?? "NO_PAYER", detail: { action, actor, cost } };
   }
 
   const prevMeta = loadMeta();
@@ -508,16 +546,13 @@ function __consumeCore(
     return { ok: false, reason: "INSUFFICIENT_FUNDS", detail: { payerAccountId, cost, balance: payer.balance } };
   }
 
-  // Island bucket charge se payer è company e abbiamo islandId
+  // Island bucket charge se richiesto
   let islandBucketCharged = false;
-  if (ref?.islandId) {
+  if (ref?.islandId && res.willChargeIslandBucket) {
     const { ownerType, ownerId } = splitAccountId(payerAccountId);
     if (ownerType === "company" && ownerId) {
-      const cur = getIslandBudget(ownerId, ref.islandId);
-      if (cur >= cost) {
-        addToIslandBudget(ownerId, ref.islandId, -cost);
-        islandBucketCharged = true;
-      }
+      addToIslandBudget(ownerId, ref.islandId, -cost);
+      islandBucketCharged = true;
     }
   }
 
@@ -525,6 +560,7 @@ function __consumeCore(
   const nextBalance = round6(payer.balance - cost);
   const low = nextBalance <= (payer.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD);
 
+  const payerOwnerType = splitAccountId(payerAccountId).ownerType;
   const tx: CreditTx = {
     id: txId("consume"),
     ts,
@@ -538,9 +574,7 @@ function __consumeCore(
       balance_after: nextBalance,
       lowBalance: low,
       islandBucketCharged,
-      payerType:
-        splitAccountId(payerAccountId).ownerType === "company" ? "company" :
-        splitAccountId(payerAccountId).ownerType === "admin" ? "admin" : "member",
+      payerType: payerOwnerType === "company" ? "company" : payerOwnerType === "admin" ? "admin" : "member",
     },
   } as any;
 
@@ -605,23 +639,10 @@ export function spend(
     }
   }
 
-  // 1) priorità membro assegnato
-  let payerAccountId: string | undefined;
-  if (ref?.assignedToDid) {
-    const memberAcc = findMemberAccount(ref.assignedToDid);
-    if (memberAcc) {
-      const bal = loadAccounts()[memberAcc]?.balance ?? 0;
-      if (bal >= cost) payerAccountId = memberAcc;
-    }
-  }
-
-  // 2) fallback catena sponsor
+  const res = resolvePayer(action, actor, cost, ref);
+  const payerAccountId = res.payerAccountId;
   if (!payerAccountId) {
-    const r = resolvePayer(action, actor, cost);
-    payerAccountId = r.payerAccountId;
-    if (!payerAccountId) {
-      return { ok: false, reason: r.reason ?? "NO_PAYER", detail: { action, actor, cost } };
-    }
+    return { ok: false, reason: res.reason ?? "NO_PAYER", detail: { action, actor, cost } };
   }
 
   const prevMeta = loadMeta();
@@ -631,16 +652,12 @@ export function spend(
     return { ok: false, reason: "INSUFFICIENT_FUNDS", detail: { payerAccountId, cost, balance: payer.balance } };
   }
 
-  // Island bucket charge se company + islandId
   let islandBucketCharged = false;
-  if (ref?.islandId) {
+  if (ref?.islandId && res.willChargeIslandBucket) {
     const { ownerType, ownerId } = splitAccountId(payerAccountId);
     if (ownerType === "company" && ownerId) {
-      const cur = getIslandBudget(ownerId, ref.islandId);
-      if (cur >= cost) {
-        addToIslandBudget(ownerId, ref.islandId, -cost);
-        islandBucketCharged = true;
-      }
+      addToIslandBudget(ownerId, ref.islandId, -cost);
+      islandBucketCharged = true;
     }
   }
 
@@ -648,6 +665,7 @@ export function spend(
   const nextBalance = round6(payer.balance - cost);
   const low = nextBalance <= (payer.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD);
 
+  const payerOwnerType = splitAccountId(payerAccountId).ownerType;
   const tx: CreditTx = {
     id: txId("spend"),
     ts,
@@ -665,9 +683,7 @@ export function spend(
       balance_after: nextBalance,
       lowBalance: low,
       islandBucketCharged,
-      payerType:
-        splitAccountId(payerAccountId).ownerType === "company" ? "company" :
-        splitAccountId(payerAccountId).ownerType === "admin" ? "admin" : "member",
+      payerType: payerOwnerType === "company" ? "company" : payerOwnerType === "admin" ? "admin" : "member",
       dedup_key: dk,
     },
   } as any;

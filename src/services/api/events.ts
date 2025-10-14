@@ -70,7 +70,8 @@ export function createEvent(
     | (Omit<ProductEvent, "id" | "timestamp" | "createdAt"> & { notes?: string })
     | EventCreateInput
 ): ProductEvent {
-  const id = `evt_${randomHex(10)}`;
+  const hasId = !!(input as any)?.id;
+  const id = hasId ? (input as any).id : `evt_${randomHex(10)}`;
   const now = nowISO();
 
   const i: any = input;
@@ -96,58 +97,64 @@ export function createEvent(
       status,
       assignedToDid: i.assignedToDid ?? i.data?.assignedToDid,
       islandId: i.islandId ?? i.data?.islandId,
+      txRef: i.txRef ?? i.data?.txRef, // onora txRef preesistente
     },
     related: i.related,
   };
 
-  // Billing best-effort
+  // Billing idempotente: esegui SOLO se txRef assente
   try {
-    const islandForBilling = evt.islandId ?? evt.data?.islandId ?? null;
-    const ref: any = {
-      type: "event",
-      id: evt.id,
-      productId: evt.productId,
-      eventType: evt.type,
-      status: evt.status,
-      assignedToDid: evt.assignedToDid || evt.data?.assignedToDid, // NEW
-      islandId: islandForBilling || undefined, // mirror
-    };
-
-    const res: any =
-      typeof (creditStore as any)?.consume === "function"
-        ? (creditStore as any).consume({
-            companyId: evt.companyDid,
-            action: mapEventToCreditAction(evt.type as string),
-            ref,
-            islandId: islandForBilling || undefined,
-          })
-        : null;
-
-    if (res && res.ok) {
-      const cost = Number(res.cost);
-      const bucketId = res.bucketId as string | undefined;
-      const txId = (res.tx && (res.tx.id || res.tx.txId)) as string | undefined;
-      const payerType = (res.tx as any)?.meta?.payerType as string | undefined;
-
-      (evt as any).cost = Number.isFinite(cost) ? cost : undefined;
-      (evt as any).meta = {
-        ...(evt as any).meta,
-        islandBucketCharged: bucketId,
-        payerType,
-        txId,
+    const alreadyPaid = !!(evt.data as any)?.txRef;
+    if (!alreadyPaid) {
+      const islandForBilling = evt.islandId ?? evt.data?.islandId ?? null;
+      const ref: any = {
+        type: "event",
+        id: evt.id,
+        productId: evt.productId,
+        eventType: evt.type,
+        status: evt.status,
+        assignedToDid: evt.assignedToDid || evt.data?.assignedToDid,
+        islandId: islandForBilling || undefined,
       };
 
-      evt.data = {
-        ...(evt.data ?? {}),
-        billing: {
-          ...(evt.data?.billing ?? {}),
-          cost: (evt as any).cost,
+      const action = mapEventToCreditAction(evt.type as string);
+      const actor = {
+        ownerType: "company",
+        ownerId: evt.companyDid,
+        companyId: evt.companyDid,
+      } as any;
+
+      const res: any =
+        typeof (creditStore as any)?.spend === "function"
+          ? (creditStore as any).spend(action, actor, ref, 1, `${action}:${evt.id}`)
+          : null;
+
+      if (res && res.ok) {
+        const cost = Number(res.cost);
+        const bucketId = res.bucketId as string | undefined;
+        const txId = (res.tx && (res.tx.id || res.tx.txId)) as string | undefined;
+        const payerType = (res.tx as any)?.meta?.payerType as string | undefined;
+
+        (evt as any).cost = Number.isFinite(cost) ? cost : undefined;
+        (evt as any).meta = {
+          ...(evt as any).meta,
           islandBucketCharged: bucketId,
           payerType,
           txId,
-        },
-        txRef: txId ?? evt.data?.txRef,
-      };
+        };
+
+        evt.data = {
+          ...(evt.data ?? {}),
+          billing: {
+            ...(evt.data as any)?.billing,
+            cost: (evt as any).cost,
+            islandBucketCharged: bucketId,
+            payerType,
+            txId,
+          },
+          txRef: txId ?? (evt.data as any)?.txRef,
+        };
+      }
     }
   } catch {}
 

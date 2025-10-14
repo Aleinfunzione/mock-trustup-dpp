@@ -2,14 +2,14 @@
 import type { PriceTable, SponsorshipPolicy, CreditAction } from "@/types/credit";
 
 /** Prezzi per azione (crediti) – interi, coerenti con creditStore.consume */
-export const PRICE_TABLE: PriceTable = Object.freeze({
+export const PRICE_TABLE: PriceTable = {
   VC_CREATE: 3,
   VP_PUBLISH: 5,
   EVENT_CREATE: 1,
   ASSIGNMENT_CREATE: 2,
   TELEMETRY_PACKET: 1,
   MACHINE_AUTOCOMPLETE: 5,
-});
+} as const;
 
 /**
  * Politiche di sponsorship e fallback del payer.
@@ -17,14 +17,14 @@ export const PRICE_TABLE: PriceTable = Object.freeze({
  * - company = azienda dell’attore
  * - admin = conto master
  */
-export const SPONSORSHIP: SponsorshipPolicy = Object.freeze({
+export const SPONSORSHIP: SponsorshipPolicy = {
   VC_CREATE: { payerOrder: ["company", "admin"] },
   VP_PUBLISH: { payerOrder: ["company", "admin"] },
   EVENT_CREATE: { payerOrder: ["actor", "company", "admin"] },
   ASSIGNMENT_CREATE: { payerOrder: ["actor", "company", "admin"] },
   TELEMETRY_PACKET: { payerOrder: ["actor", "company", "admin"] },
   MACHINE_AUTOCOMPLETE: { payerOrder: ["actor", "company", "admin"] },
-});
+} as const;
 
 /** Alias legacy */
 export const sponsorshipChain = SPONSORSHIP;
@@ -43,3 +43,20 @@ export function getActionCost(action: CreditAction, qty = 1): number {
   const n = Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 1;
   return unit * n;
 }
+
+/** Regola di addebito configurabile: isola > attore > fallback */
+export type ChargePolicy = {
+  /** Se presente islandId e bucket isola capiente, usa account company e scala dal bucket. */
+  preferIsland?: boolean;
+  /** Se presente assignedToDid e saldo sufficiente, addebita l’attore assegnato. */
+  preferActor?: boolean;
+  /** Catena di fallback quando i preferiti non possono pagare. */
+  fallbackOrder?: ("actor" | "company" | "admin")[];
+};
+
+/** Default: isola → attore → company → admin */
+export const CHARGE_POLICY: ChargePolicy = {
+  preferIsland: true,
+  preferActor: true,
+  fallbackOrder: ["actor", "company", "admin"],
+};

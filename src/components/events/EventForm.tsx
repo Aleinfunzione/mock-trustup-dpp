@@ -19,8 +19,9 @@ import { getProduct as getProductSvc, listProductsByCompany } from "@/services/a
 // identity fallback
 import * as IdentityApi from "@/services/api/identity";
 
-// credits API
-import { simulate as simulateCredits, spend as spendCredits } from "@/services/api/credits";
+// credits: preview via store (policy-aware), addebito via API idempotente
+import { simulate as simulateCredits } from "@/stores/creditStore";
+import { spend as spendCredits } from "@/services/api/credits";
 import type { AccountOwnerType, ConsumeActor, CreditAction, ConsumeResult } from "@/types/credit";
 
 // org: assegnazioni
@@ -155,6 +156,8 @@ export default function EventForm({
 
   const [canPay, setCanPay] = useState<boolean>(true);
   const [actionCost, setActionCost] = useState<number>(0);
+  const [payerPreview, setPayerPreview] = useState<string | undefined>(undefined);
+  const [willChargeBucket, setWillChargeBucket] = useState<boolean>(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -185,10 +188,6 @@ export default function EventForm({
     };
     load();
   }, [currentUser?.companyDid, currentUser?.did]);
-
-  useEffect(() => {
-    if (!defaultProductId && !productId && products.length > 0) setProductId(products[0].id);
-  }, [products, defaultProductId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!productId) {
@@ -234,13 +233,17 @@ export default function EventForm({
     })();
   }, [currentUser?.companyDid, currentUser?.did, targetKind, islandId, productIslandId]);
 
-  // credito disponibile + costo dinamico
+  // credito disponibile + costo + payer preview
   useEffect(() => {
     let alive = true;
     async function checkCredits() {
       if (!currentUser?.did) {
-        setCanPay(true);
-        setActionCost(0);
+        if (alive) {
+          setCanPay(true);
+          setActionCost(0);
+          setPayerPreview(undefined);
+          setWillChargeBucket(false);
+        }
         return;
       }
       try {
@@ -251,16 +254,21 @@ export default function EventForm({
           companyId: (u?.companyId ?? u?.companyDid) as string | undefined,
         };
         const assigned = assignedToDid || (targetKind === "member" ? assignee : undefined);
+        const chosenIslandId = targetKind === "island" && islandId ? islandId : productIslandId || undefined;
         const action: CreditAction = assigned ? "ASSIGNMENT_CREATE" : ("EVENT_CREATE" as CreditAction);
-        const sim = simulateCredits(action, actor, 1);
+        const sim = simulateCredits(action, actor, 1, { assignedToDid: assigned, islandId: chosenIslandId });
         if (alive) {
           setCanPay(!!sim.payer);
           setActionCost(sim.cost || 0);
+          setPayerPreview(sim.payer);
+          setWillChargeBucket(!!sim.willChargeIslandBucket);
         }
       } catch {
         if (alive) {
           setCanPay(false);
           setActionCost(0);
+          setPayerPreview(undefined);
+          setWillChargeBucket(false);
         }
       }
     }
@@ -268,7 +276,7 @@ export default function EventForm({
     return () => {
       alive = false;
     };
-  }, [currentUser?.did, currentUser?.companyDid, currentUser?.role, assignedToDid, targetKind, assignee]);
+  }, [currentUser?.did, currentUser?.companyDid, currentUser?.role, assignedToDid, targetKind, assignee, islandId, productIslandId]);
 
   const allowedTypes =
     Array.isArray(EVENT_TYPES) && EVENT_TYPES.length
@@ -345,7 +353,7 @@ export default function EventForm({
         : errRes.reason === "NO_PAYER"
         ? "Nessuno sponsor disponibile"
         : "Conflitto di salvataggio";
-    throw Object.assign(new Error(msg), { code: errRes.reason, detail: errRes.detail });
+      throw Object.assign(new Error(msg), { code: errRes.reason, detail: errRes.detail });
     }
     const txRef: string | undefined = (spendRes as any).tx?.id;
 
@@ -365,7 +373,7 @@ export default function EventForm({
           targetPath: scope === "bom" ? targetMeta?.path : undefined,
           targetLabel: scope === "bom" ? targetMeta?.label : undefined,
           islandId: chosenIslandId,
-          txRef,
+          txRef, // impedisce doppio addebito lato service
         },
       } as any ),
     } as any);
@@ -449,16 +457,21 @@ export default function EventForm({
       const actor = await buildActor();
       if (!actor) return;
       const assigned = assignedToDid || (targetKind === "member" ? assignee : undefined);
+      const chosenIslandId = targetKind === "island" && islandId ? islandId : productIslandId || undefined;
       const action: CreditAction = assigned ? "ASSIGNMENT_CREATE" : ("EVENT_CREATE" as CreditAction);
-      const sim = simulateCredits(action, actor, 1);
+      const sim = simulateCredits(action, actor, 1, { assignedToDid: assigned, islandId: chosenIslandId });
       if (!sim.payer) {
         setCanPay(false);
         setActionCost(sim.cost || 0);
+        setPayerPreview(undefined);
+        setWillChargeBucket(false);
         toast({ title: "Saldo insufficiente", description: "Ricarica il conto o cambia sponsor.", variant: "destructive" });
         return;
       }
       setCanPay(true);
       setActionCost(sim.cost || 0);
+      setPayerPreview(sim.payer);
+      setWillChargeBucket(!!sim.willChargeIslandBucket);
       await attemptFlow();
     } catch (err: any) {
       toast({
@@ -676,6 +689,12 @@ export default function EventForm({
             <div className="text-xs text-muted-foreground">
               Costo azione: <span className="font-mono">{fmtCredits(actionCost)}</span> crediti
               {!canPay && <span className="text-destructive ml-2">• crediti insufficienti</span>}
+              {payerPreview && (
+                <span className="ml-3">
+                  Payer: <span className="font-mono">{payerPreview}</span>
+                  {willChargeBucket ? <span> • bucket isola</span> : null}
+                </span>
+              )}
             </div>
             <div className="flex gap-2 w-full sm:w-auto">
               {!canPay && (

@@ -26,6 +26,9 @@ import { getIslandBudget, setIslandBudget } from "@/stores/creditStore";
 
 type Bal = { id: string; balance: number; low?: boolean };
 type Actor = { did: string; role?: string; name?: string };
+type IslandRow = { id: string; budget: number };
+
+const UI_KEY = "trustup:companyCredits:ui";
 
 function roleToOwnerType(role?: string): AccountOwnerType {
   const r = (role || "").toLowerCase();
@@ -66,8 +69,6 @@ async function loadCompanyActors(companyDid: string): Promise<Actor[]> {
   }
 }
 
-type IslandRow = { id: string; budget: number };
-
 export default function CompanyCreditsPage() {
   const { currentUser } = useAuthStore();
   const { toast } = useToast();
@@ -103,16 +104,46 @@ export default function CompanyCreditsPage() {
   const [balances, setBalances] = React.useState<Record<string, Bal>>({});
   const [loading, setLoading] = React.useState(false);
 
+  // ---- boot: querystring + localStorage ----
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const savedRaw = localStorage.getItem(UI_KEY);
+      const saved = savedRaw ? JSON.parse(savedRaw) : {};
+      const pick = <T,>(k: string, fallback: T): T => {
+        const qs = params.get(k);
+        return (qs as any) ?? (saved?.[k] as any) ?? fallback;
+      };
+      setOpDid(String(pick("op", "")));
+      setMacDid(String(pick("mac", "")));
+      setOtherDid(String(pick("oth", "")));
+      const ot = String(pick("othType", "creator"));
+      if (ot === "creator" || ot === "admin" || ot === "operator" || ot === "machine") setOtherType(ot as AccountOwnerType);
+      setIslandId(String(pick("isl", "")));
+
+      const n = (x: any, d: number) => {
+        const v = Number(x);
+        return Number.isFinite(v) && v >= 0 ? v : d;
+      };
+      setAmtOp(n(pick("amtOp", 10), 10));
+      setAmtMac(n(pick("amtMac", 10), 10));
+      setAmtOther(n(pick("amtOther", 10), 10));
+      setAmtIsl(n(pick("amtIsl", 10), 10));
+      setThr(n(pick("thr", 10), 10));
+    } catch {}
+  }, []);
+
   // init attori
   React.useEffect(() => {
     if (!companyDid) return;
     loadCompanyActors(companyDid).then((list) => {
       setMembers(list);
-      setOpDid(list.find(a => roleToOwnerType(a.role) === "operator")?.did || "");
-      setMacDid(list.find(a => roleToOwnerType(a.role) === "machine")?.did || "");
-      setOtherDid(list.find(a => roleToOwnerType(a.role) === "creator")?.did || "");
+      if (!opDid) setOpDid(list.find(a => roleToOwnerType(a.role) === "operator")?.did || "");
+      if (!macDid) setMacDid(list.find(a => roleToOwnerType(a.role) === "machine")?.did || "");
+      if (!otherDid) setOtherDid(list.find(a => roleToOwnerType(a.role) === "creator")?.did || "");
     });
-  }, [companyDid]);
+  }, [companyDid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // seed isole da eventi + budget attuale
   React.useEffect(() => {
@@ -122,9 +153,9 @@ export default function CompanyCreditsPage() {
       const ids = Array.from(new Set(evts.map((e: any) => e.islandId || e.data?.islandId).filter(Boolean) as string[]));
       const rows = ids.map((id) => ({ id, budget: getIslandBudget(companyDid, id) }));
       setIslands(rows);
-      setIslandId(ids[0] || "");
+      if (!islandId) setIslandId(ids[0] || "");
     } catch {}
-  }, [companyDid]);
+  }, [companyDid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // refresh bilanci per gli account correnti
   const refreshBalances = React.useCallback(() => {
@@ -138,9 +169,41 @@ export default function CompanyCreditsPage() {
 
   React.useEffect(() => { if (companyAcc) refreshBalances(); }, [refreshBalances]);
 
+  // persist UI state to localStorage + querystring
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const state = {
+      op: opDid, mac: macDid, othType: otherType, oth: otherDid, isl: islandId,
+      amtOp, amtMac, amtOther, amtIsl, thr: threshold,
+    };
+    try { localStorage.setItem(UI_KEY, JSON.stringify(state)); } catch {}
+    try {
+      const p = new URLSearchParams();
+      if (opDid) p.set("op", opDid);
+      if (macDid) p.set("mac", macDid);
+      if (otherDid) p.set("oth", otherDid);
+      if (otherType) p.set("othType", otherType);
+      if (islandId) p.set("isl", islandId);
+      p.set("amtOp", String(amtOp));
+      p.set("amtMac", String(amtMac));
+      p.set("amtOther", String(amtOther));
+      p.set("amtIsl", String(amtIsl));
+      p.set("thr", String(threshold));
+      const qs = p.toString();
+      const url = `${window.location.pathname}${qs ? `?${qs}` : ""}`;
+      window.history.replaceState(null, "", url);
+    } catch {}
+  }, [opDid, macDid, otherType, otherDid, islandId, amtOp, amtMac, amtOther, amtIsl, threshold]);
+
   // helpers view
   const bal = (accId?: string) => (accId ? balances[accId]?.balance ?? 0 : 0);
   const accStr = (t: AccountOwnerType, did: string) => (did ? accountId(t, did) : "");
+
+  // deep-link helpers
+  const historyUrlForAccount = (acc?: string) =>
+    acc ? `/company/credits/history?account=${encodeURIComponent(acc)}` : "#";
+  const historyUrlForIsland = (id?: string) =>
+    id ? `/company/credits/history?islandId=${encodeURIComponent(id)}` : "#";
 
   // actions
   async function handleThresholdCompany() {
@@ -190,7 +253,14 @@ export default function CompanyCreditsPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Crediti azienda</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Crediti azienda</CardTitle>
+            {companyAcc && (
+              <Button asChild variant="outline" size="sm">
+                <a href={historyUrlForAccount(companyAcc)}>Vedi storico azienda</a>
+              </Button>
+            )}
+          </div>
         </CardHeader>
 
         <CardContent className="space-y-6">
@@ -209,10 +279,15 @@ export default function CompanyCreditsPage() {
                 <Label>Soglia low-balance</Label>
                 <Input type="number" min={0} value={threshold} onChange={(e) => setThr(Number(e.target.value))} />
               </div>
-              <div className="grid content-end">
+              <div className="grid content-end gap-2 sm:grid-cols-2">
                 <Button variant="outline" onClick={handleThresholdCompany} disabled={!companyAcc || loading}>
                   Imposta soglia
                 </Button>
+                {companyAcc && (
+                  <Button asChild variant="ghost">
+                    <a href={historyUrlForAccount(companyAcc)}>Vedi storico</a>
+                  </Button>
+                )}
               </div>
               <div className="grid content-end text-xs text-muted-foreground">
                 <div>Azienda: <span className="font-mono">{companyBal}</span></div>
@@ -224,7 +299,14 @@ export default function CompanyCreditsPage() {
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Operatore */}
             <div className="rounded-md border p-4 space-y-3">
-              <div className="text-sm font-medium">Trasferisci a operatore</div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">Trasferisci a operatore</div>
+                {opAcc && (
+                  <Button asChild variant="ghost" size="sm">
+                    <a href={historyUrlForAccount(opAcc)}>Vedi storico</a>
+                  </Button>
+                )}
+              </div>
               <Select value={opDid} onValueChange={(v) => setOpDid(v)}>
                 <SelectTrigger><SelectValue placeholder="Seleziona operatore" /></SelectTrigger>
                 <SelectContent className="z-[60]">
@@ -246,7 +328,14 @@ export default function CompanyCreditsPage() {
 
             {/* Macchina */}
             <div className="rounded-md border p-4 space-y-3">
-              <div className="text-sm font-medium">Trasferisci a macchina</div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">Trasferisci a macchina</div>
+                {macAcc && (
+                  <Button asChild variant="ghost" size="sm">
+                    <a href={historyUrlForAccount(macAcc)}>Vedi storico</a>
+                  </Button>
+                )}
+              </div>
               <Select value={macDid} onValueChange={(v) => setMacDid(v)}>
                 <SelectTrigger><SelectValue placeholder="Seleziona macchina" /></SelectTrigger>
                 <SelectContent className="z-[60]">
@@ -268,7 +357,14 @@ export default function CompanyCreditsPage() {
 
             {/* Altro */}
             <div className="rounded-md border p-4 space-y-3">
-              <div className="text-sm font-medium">Altro (creator/admin o DID manuale)</div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">Altro (creator/admin o DID manuale)</div>
+                {othAcc && (
+                  <Button asChild variant="ghost" size="sm">
+                    <a href={historyUrlForAccount(othAcc)}>Vedi storico</a>
+                  </Button>
+                )}
+              </div>
               <div className="grid sm:grid-cols-3 gap-2">
                 <Select value={otherType} onValueChange={(v: AccountOwnerType) => setOtherType(v)}>
                   <SelectTrigger><SelectValue placeholder="Tipo" /></SelectTrigger>
@@ -305,7 +401,14 @@ export default function CompanyCreditsPage() {
 
             {/* Bucket isola */}
             <div className="rounded-md border p-4 space-y-3">
-              <div className="text-sm font-medium">Bucket isola — ricarica veloce</div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">Bucket isola — ricarica veloce</div>
+                {islandId && (
+                  <Button asChild variant="ghost" size="sm">
+                    <a href={historyUrlForIsland(islandId)}>Vedi storico</a>
+                  </Button>
+                )}
+              </div>
               <Select value={islandId} onValueChange={setIslandId}>
                 <SelectTrigger><SelectValue placeholder="Seleziona isola" /></SelectTrigger>
                 <SelectContent>
