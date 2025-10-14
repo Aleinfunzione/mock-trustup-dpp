@@ -1,55 +1,36 @@
 // src/pages/events/CreatorEventsPage.tsx
 import * as React from "react";
+import { Link } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 import { useAuth } from "@/hooks/useAuth";
 import { getActor } from "@/services/api/identity";
 import { listProductsByCompany, getProduct as getProductSvc } from "@/services/api/products";
 import * as productsApi from "@/services/api/products";
-
 import EventForm from "@/components/events/EventForm";
 import RawEventTimeline from "@/components/events/EventTimeline";
-
-// isole: fonte unica
 import { getCompanyAttrs } from "@/services/api/companyAttributes";
-
-// assignments per filtro assegnatario
 import { listAssignments } from "@/stores/orgStore";
-
-// identity fallback
 import * as IdentityApi from "@/services/api/identity";
 
+/* ---------------- shared types/utils ---------------- */
 type LiteProduct = { id: string; name: string; sku?: string; typeId?: string; updatedAt?: string };
 type Actor = {
-  did: string;
-  role?: string;
-  displayName?: string;
-  firstName?: string;
-  lastName?: string;
-  fullName?: string;
-  name?: string;
-  username?: string;
-  email?: string;
+  did: string; role?: string; displayName?: string; firstName?: string; lastName?: string;
+  fullName?: string; name?: string; username?: string; email?: string;
 };
 
 function isOperatorRole(r?: string) {
   const x = (r || "").toLowerCase();
   return x.includes("operator") || x.includes("machine") || x.includes("macchin");
 }
-
 async function getCompanyActors(companyDid: string): Promise<Actor[]> {
   const api: any = IdentityApi as any;
-  const fn =
-    api.listCompanyMembers ||
-    api.listMembersByCompany ||
-    api.listByCompany ||
-    api.listMembers ||
-    api.list ||
-    null;
-
+  const fn = api.listCompanyMembers || api.listMembersByCompany || api.listByCompany || api.listMembers || api.list || null;
   try {
     const res = typeof fn === "function" ? fn(companyDid) : [];
     const arr = Array.isArray(res) ? res : await Promise.resolve(res);
@@ -60,30 +41,20 @@ async function getCompanyActors(companyDid: string): Promise<Actor[]> {
       displayName: a.displayName || a.name || a.fullName,
       firstName: a.firstName || a.givenName || a.nome,
       lastName: a.lastName || a.familyName || a.cognome,
-      fullName: a.fullName,
-      username: a.username,
-      email: a.email,
+      fullName: a.fullName, username: a.username, email: a.email,
     }));
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
-
 function actorLabel(a: Actor) {
   const candidates = [
     a.displayName,
     [a.firstName, a.lastName].filter(Boolean).join(" ").trim() || undefined,
-    a.fullName,
-    a.name,
-    a.username,
-    a.email ? String(a.email).split("@")[0] : undefined,
+    a.fullName, a.name, a.username, a.email ? String(a.email).split("@")[0] : undefined,
   ].filter(Boolean) as string[];
   const nm = candidates.find(Boolean) || "Operatore";
   const role = a.role ? ` • ${a.role}` : "";
   return `${nm} — ${a.did}${role}`;
 }
-
-// overlay cleanup
 function useCloseOverlaysOnUnmount() {
   React.useEffect(() => {
     return () => {
@@ -91,23 +62,18 @@ function useCloseOverlaysOnUnmount() {
         const selectors = [
           '[role="dialog"][data-state="open"]',
           '[data-state="open"][data-radix-popper-content-wrapper]',
-          '[data-sonner]',
-          '.fixed.inset-0[data-overlay]',
+          '[data-sonner]', '.fixed.inset-0[data-overlay]',
         ];
         document.querySelectorAll(selectors.join(",")).forEach((el) => {
-          if (el instanceof HTMLElement) {
-            el.style.pointerEvents = "none";
-            el.style.display = "none";
-          }
+          if (el instanceof HTMLElement) { el.style.pointerEvents = "none"; el.style.display = "none"; }
         });
       } catch {}
     };
   }, []);
 }
 
-export default function CreatorEventsPage() {
-  useCloseOverlaysOnUnmount();
-
+/* ---------------- shared data hook ---------------- */
+function useCreatorData() {
   const { currentUser } = useAuth();
   const actor = currentUser?.did ? getActor(currentUser.did) : undefined;
   const companyDid = currentUser?.companyDid ?? actor?.companyDid;
@@ -115,32 +81,30 @@ export default function CreatorEventsPage() {
   const [all, setAll] = React.useState<LiteProduct[]>([]);
   const [q, setQ] = React.useState("");
   const [productId, setProductId] = React.useState<string | undefined>(undefined);
-  const [timelineKey, setTimelineKey] = React.useState(0);
 
   const [islands, setIslands] = React.useState<Array<{ id: string; name: string }>>([]);
-  const [islandFilter, setIslandFilter] = React.useState<string>("");
-
   const [actors, setActors] = React.useState<Actor[]>([]);
-  const [assigneeFilter, setAssigneeFilter] = React.useState<string>("");
-
-  const [productIslandId, setProductIslandId] = React.useState<string | undefined>(undefined);
 
   React.useEffect(() => {
     if (!companyDid) {
-      setAll([]);
-      setProductId(undefined);
-      setIslands([]);
-      return;
+      setAll([]); setProductId(undefined); setIslands([]); return;
     }
     const data = listProductsByCompany(companyDid) as LiteProduct[];
     const sorted = [...data].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
     setAll(sorted);
     if (!productId && sorted[0]) setProductId(sorted[0].id);
 
-    // isole dalla stessa fonte
     const isl = getCompanyAttrs(companyDid)?.islands ?? [];
     setIslands(isl.map((i: any) => ({ id: i.id, name: i.name || i.id })));
-  }, [companyDid]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [companyDid]); // eslint-disable-line
+
+  React.useEffect(() => {
+    if (!companyDid) { setActors([]); return; }
+    (async () => {
+      const allActors = (await getCompanyActors(companyDid)).filter((a) => isOperatorRole(a.role));
+      setActors(allActors);
+    })();
+  }, [companyDid]);
 
   const filtered = React.useMemo(() => {
     if (!q.trim()) return all;
@@ -154,53 +118,22 @@ export default function CreatorEventsPage() {
     );
   }, [all, q]);
 
-  React.useEffect(() => {
-    if (!productId) {
-      setProductIslandId(undefined);
-      return;
-    }
-    const p = getProductSvc(productId) as any;
-    setProductIslandId(p?.islandId);
-  }, [productId]);
+  return { companyDid, all, filtered, q, setQ, productId, setProductId, islands, actors };
+}
 
-  React.useEffect(() => {
-    const cid = companyDid;
-    if (!cid) return;
-    (async () => {
-      const allActors = (await getCompanyActors(cid)).filter((a) => isOperatorRole(a.role));
-      if (!islandFilter) {
-        setActors(allActors);
-        return;
-      }
-      const asg = listAssignments(cid);
-      const allowed = new Set(asg.filter((a) => a.islandId === islandFilter).map((a) => a.did));
-      const filteredActors = allActors.filter((a) => allowed.has(a.did));
-      setActors(filteredActors.length ? filteredActors : allActors);
-    })();
-  }, [companyDid, islandFilter]);
-
-  async function handleEventCreated() {
-    setTimelineKey((k) => k + 1);
-    try {
-      const api: any = productsApi as any;
-      const fn =
-        api.markUpdated ?? api.touch ?? api.bumpUpdatedAt ?? api.updateProduct ?? api.save ?? null;
-      if (typeof fn === "function" && productId) await Promise.resolve(fn(productId));
-    } catch {}
-    if (companyDid) {
-      const data = listProductsByCompany(companyDid) as LiteProduct[];
-      setAll([...data].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "")));
-    }
-  }
-
-  const EventTimeline = RawEventTimeline as any;
+/* =========================================================
+   KPI (index)
+========================================================= */
+export default function CreatorEventsKPI() {
+  useCloseOverlaysOnUnmount();
+  const { companyDid, filtered, q, setQ } = useCreatorData();
 
   return (
-    <div className="relative z-0 isolate [&_*]:pointer-events-auto space-y-6">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Eventi — Creator</CardTitle>
-          <CardDescription>Seleziona un prodotto e registra un evento. Filtra la timeline per isola o assegnatario.</CardDescription>
+          <CardTitle>Eventi — KPI</CardTitle>
+          <CardDescription>Panoramica e azioni rapide.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {!companyDid ? (
@@ -209,7 +142,61 @@ export default function CreatorEventsPage() {
             <>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>Filtro</Label>
+                  <Label>Filtro prodotti</Label>
+                  <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, SKU, ID, Tipo…" />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Card className="p-4"><div className="text-xs text-muted-foreground">Prodotti</div><div className="text-2xl font-semibold">{filtered.length}</div></Card>
+                <Card className="p-4"><div className="text-xs text-muted-foreground">Azioni</div><div className="flex gap-2 mt-2">
+                  <Button asChild variant="outline"><Link to="/creator/events/create">Registra evento</Link></Button>
+                  <Button asChild variant="outline"><Link to="/creator/events/timeline">Apri timeline</Link></Button>
+                </div></Card>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* =========================================================
+   Registra evento
+========================================================= */
+export function CreatorEventsCreate() {
+  useCloseOverlaysOnUnmount();
+  const { companyDid, filtered, q, setQ, productId, setProductId } = useCreatorData();
+  const [productIslandId, setProductIslandId] = React.useState<string | undefined>(undefined);
+
+  React.useEffect(() => {
+    if (!productId) { setProductIslandId(undefined); return; }
+    const p = getProductSvc(productId) as any;
+    setProductIslandId(p?.islandId);
+  }, [productId]);
+
+  async function handleEventCreated() {
+    try {
+      const fn: any = (productsApi as any).markUpdated || (productsApi as any).touch || (productsApi as any).bumpUpdatedAt || (productsApi as any).updateProduct || (productsApi as any).save || null;
+      if (typeof fn === "function" && productId) await Promise.resolve(fn(productId));
+    } catch {}
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Registra evento</CardTitle>
+          <CardDescription>Seleziona un prodotto e compila il form.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!companyDid ? (
+            <p className="text-sm text-red-500">Account non associato ad alcuna azienda.</p>
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Filtro prodotti</Label>
                   <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, SKU, ID, Tipo…" />
                 </div>
                 <div className="space-y-2">
@@ -237,7 +224,68 @@ export default function CreatorEventsPage() {
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              {productId ? (
+                <div className="mt-4">
+                  <EventForm defaultProductId={productId} onCreated={handleEventCreated} />
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">Seleziona un prodotto per continuare.</div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* =========================================================
+   Timeline
+========================================================= */
+export function CreatorEventsTimeline() {
+  useCloseOverlaysOnUnmount();
+  const { companyDid, filtered, q, setQ, productId, setProductId, islands, actors } = useCreatorData();
+  const [assigneeFilter, setAssigneeFilter] = React.useState<string>("");
+  const [islandFilter, setIslandFilter] = React.useState<string>("");
+  const [timelineKey, setTimelineKey] = React.useState(0);
+
+  React.useEffect(() => { setTimelineKey((k) => k + 1); }, [productId, assigneeFilter, islandFilter]);
+
+  const EventTimeline = RawEventTimeline as any;
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Timeline eventi</CardTitle>
+          <CardDescription>Filtra per prodotto, isola o assegnatario.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!companyDid ? (
+            <p className="text-sm text-red-500">Account non associato ad alcuna azienda.</p>
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Filtro prodotti</Label>
+                  <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, SKU, ID, Tipo…" />
+                  <select
+                    className="mt-2 w-full h-9 rounded-md border bg-background px-3 text-sm"
+                    value={productId ?? ""}
+                    onChange={(e) => setProductId(e.target.value || undefined)}
+                  >
+                    {filtered.length === 0 ? (
+                      <option value="">— Nessun prodotto —</option>
+                    ) : (
+                      filtered.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} {p.sku ? `• ${p.sku}` : ""} — {p.id}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
                 <div className="space-y-2">
                   <Label>Filtro isola</Label>
                   <Select value={islandFilter} onValueChange={setIslandFilter}>
@@ -274,9 +322,15 @@ export default function CreatorEventsPage() {
               </div>
 
               {productId ? (
-                <div className="mt-4">
-                  <EventForm defaultProductId={productId} onCreated={handleEventCreated} />
-                </div>
+                <Card className="mt-4">
+                  <CardContent className="pt-4">
+                    <EventTimeline
+                      key={`${timelineKey}-${productId}-${islandFilter}-${assigneeFilter}`}
+                      productId={productId}
+                      filters={{ islandId: islandFilter || undefined, assignedToDid: assigneeFilter || undefined }}
+                    />
+                  </CardContent>
+                </Card>
               ) : (
                 <div className="text-sm text-muted-foreground">Seleziona un prodotto per continuare.</div>
               )}
@@ -284,21 +338,6 @@ export default function CreatorEventsPage() {
           )}
         </CardContent>
       </Card>
-
-      {productId && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Timeline eventi</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <EventTimeline
-              key={`${timelineKey}-${productId}-${islandFilter}-${assigneeFilter}`}
-              productId={productId}
-              filters={{ islandId: islandFilter || undefined, assignedToDid: assigneeFilter || undefined }}
-            />
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

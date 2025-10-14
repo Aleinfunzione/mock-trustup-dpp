@@ -163,8 +163,12 @@ export default function CreditHistory() {
                   <td className="py-1 pr-3 font-mono text-xs">{x.id}</td>
                   <td className="py-1 pr-3 whitespace-nowrap">{x.ts}</td>
                   <td className="py-1 pr-3">{x.type}</td>
-                  <td className="py-1 pr-3 break-all">{(x as any).fromAccountId || ""}</td>
-                  <td className="py-1 pr-3 break-all">{(x as any).toAccountId || ""}</td>
+                  <td className="py-1 pr-3 font-mono text-xs truncate max-w-[220px] whitespace-nowrap overflow-hidden">
+                    {(x as any).fromAccountId || ""}
+                  </td>
+                  <td className="py-1 pr-3 font-mono text-xs truncate max-w-[220px] whitespace-nowrap overflow-hidden">
+                    {(x as any).toAccountId || ""}
+                  </td>
                   <td className="py-1 pr-3">{fmt((x as any).amount)}</td>
                   <td className="py-1 pr-3">{ref.productId || ""}</td>
                   <td className="py-1 pr-3">{ref.eventId || ""}</td>

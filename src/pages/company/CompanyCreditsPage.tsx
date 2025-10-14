@@ -16,23 +16,16 @@ import {
 } from "@/services/api/credits";
 import type { AccountOwnerType } from "@/types/credit";
 import CreditsBadge from "@/components/credit/CreditsBadge";
-import CreditHistory from "@/components/credit/CreditHistory";
 
-// ---- identity (fallback robusto)
+// identity
 import * as IdentityApi from "@/services/api/identity";
-
-// ---- eventi per scoprire isole usate (seed editor)
+// eventi → seed isole
 import { listEvents } from "@/services/api/events";
-
-// ---- bucket isole
+// bucket isole
 import { getIslandBudget, setIslandBudget } from "@/stores/creditStore";
 
 type Bal = { id: string; balance: number; low?: boolean };
-type Actor = {
-  did: string;
-  role?: string; // creator | operator | machine | ...
-  name?: string;
-};
+type Actor = { did: string; role?: string; name?: string };
 
 function roleToOwnerType(role?: string): AccountOwnerType {
   const r = (role || "").toLowerCase();
@@ -82,145 +75,116 @@ export default function CompanyCreditsPage() {
   const companyDid = currentUser?.companyDid || currentUser?.did || "";
   const companyAcc = companyDid ? accountId("company", companyDid) : "";
 
-  const [amount, setAmount] = React.useState<number>(10);
+  // soglia
   const [threshold, setThr] = React.useState<number>(10);
 
+  // importi
+  const [amtOp, setAmtOp] = React.useState<number>(10);
+  const [amtMac, setAmtMac] = React.useState<number>(10);
+  const [amtOther, setAmtOther] = React.useState<number>(10);
+  const [amtIsl, setAmtIsl] = React.useState<number>(10);
+
+  // attori
   const [members, setMembers] = React.useState<Actor[]>([]);
-  const [memberDid, setMemberDid] = React.useState<string>("");
-  const [memberType, setMemberType] = React.useState<AccountOwnerType>("creator");
+  const operators = React.useMemo(() => members.filter(m => roleToOwnerType(m.role) === "operator"), [members]);
+  const machines  = React.useMemo(() => members.filter(m => roleToOwnerType(m.role) === "machine"), [members]);
+  const creators  = React.useMemo(() => members.filter(m => roleToOwnerType(m.role) === "creator"), [members]);
 
-  const memberAcc = memberDid ? accountId(memberType, memberDid) : "";
+  const [opDid, setOpDid] = React.useState<string>("");
+  const [macDid, setMacDid] = React.useState<string>("");
+  const [otherType, setOtherType] = React.useState<AccountOwnerType>("creator");
+  const [otherDid, setOtherDid] = React.useState<string>("");
 
+  // isole
+  const [islands, setIslands] = React.useState<IslandRow[]>([]);
+  const [islandId, setIslandId] = React.useState<string>("");
+
+  // bilanci selezionati
   const [balances, setBalances] = React.useState<Record<string, Bal>>({});
   const [loading, setLoading] = React.useState(false);
 
-  // --- Bucket isole editor state
-  const [islands, setIslands] = React.useState<IslandRow[]>([]);
-  const [newIslandId, setNewIslandId] = React.useState("");
-
-  // carica membri dell'azienda
+  // init attori
   React.useEffect(() => {
     if (!companyDid) return;
     loadCompanyActors(companyDid).then((list) => {
       setMembers(list);
-      if (list.length) {
-        setMemberDid(list[0].did);
-        setMemberType(roleToOwnerType(list[0].role));
-      }
+      setOpDid(list.find(a => roleToOwnerType(a.role) === "operator")?.did || "");
+      setMacDid(list.find(a => roleToOwnerType(a.role) === "machine")?.did || "");
+      setOtherDid(list.find(a => roleToOwnerType(a.role) === "creator")?.did || "");
     });
   }, [companyDid]);
 
-  // seed iniziale isole da eventi dell'azienda
+  // seed isole da eventi + budget attuale
   React.useEffect(() => {
     if (!companyDid) return;
     try {
       const evts = listEvents({ companyDid });
-      const ids = Array.from(
-        new Set(
-          evts
-            .map((e: any) => e.islandId || e.data?.islandId)
-            .filter(Boolean) as string[]
-        )
-      );
+      const ids = Array.from(new Set(evts.map((e: any) => e.islandId || e.data?.islandId).filter(Boolean) as string[]));
       const rows = ids.map((id) => ({ id, budget: getIslandBudget(companyDid, id) }));
       setIslands(rows);
-    } catch {
-      // no-op
-    }
+      setIslandId(ids[0] || "");
+    } catch {}
   }, [companyDid]);
 
-  const refreshIslandBudgets = React.useCallback(() => {
-    setIslands((rows) =>
-      rows.map(({ id }) => ({ id, budget: getIslandBudget(companyDid, id) }))
-    );
-  }, [companyDid]);
-
-  // refresh bilanci
-  const refresh = React.useCallback(() => {
-    if (!companyAcc) return;
-    const ids = [companyAcc, memberAcc].filter(Boolean);
-    const list = getBalances(ids).reduce<Record<string, Bal>>((m, b) => {
-      m[b.id] = b as Bal;
-      return m;
-    }, {});
+  // refresh bilanci per gli account correnti
+  const refreshBalances = React.useCallback(() => {
+    const ids: string[] = [companyAcc];
+    if (opDid)    ids.push(accountId("operator", opDid));
+    if (macDid)   ids.push(accountId("machine", macDid));
+    if (otherDid) ids.push(accountId(otherType, otherDid));
+    const list = getBalances(ids).reduce<Record<string, Bal>>((m, b) => { m[b.id] = b as Bal; return m; }, {});
     setBalances(list);
-  }, [companyAcc, memberAcc]);
+  }, [companyAcc, opDid, macDid, otherDid, otherType]);
 
-  React.useEffect(() => {
-    refresh();
-  }, [refresh]);
+  React.useEffect(() => { if (companyAcc) refreshBalances(); }, [refreshBalances]);
 
-  function onSelectMember(did: string) {
-    setMemberDid(did);
-    const m = members.find((x) => x.did === did);
-    setMemberType(roleToOwnerType(m?.role));
-  }
+  // helpers view
+  const bal = (accId?: string) => (accId ? balances[accId]?.balance ?? 0 : 0);
+  const accStr = (t: AccountOwnerType, did: string) => (did ? accountId(t, did) : "");
 
-  async function handleTransferToMember() {
-    if (!companyAcc || !memberAcc || amount <= 0) return;
-    setLoading(true);
-    try {
-      await ensureMemberAccount(memberType, memberDid, 0);
-      transferBetween(companyAcc, memberAcc, Math.floor(amount), {
-        reason: "company_to_member",
-      });
-      toast({ title: "Trasferimento effettuato" });
-      refresh();
-    } catch (e: any) {
-      toast({
-        title: "Errore trasferimento",
-        description: e?.message ?? "Impossibile trasferire",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  // actions
   async function handleThresholdCompany() {
     if (!companyAcc) return;
     setLoading(true);
     try {
       setThreshold(companyAcc, Math.max(0, Math.floor(threshold)));
       toast({ title: "Soglia azienda aggiornata" });
-      refresh();
+      refreshBalances();
     } catch (e: any) {
       toast({ title: "Errore soglia", description: e?.message ?? "Impossibile salvare", variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
-  function addIslandRow() {
-    const id = newIslandId.trim();
-    if (!id) return;
-    if (islands.some((r) => r.id === id)) {
-      toast({ title: "Isola già presente", variant: "destructive" });
-      return;
-    }
-    setIslands((r) => [...r, { id, budget: getIslandBudget(companyDid, id) }]);
-    setNewIslandId("");
-  }
-
-  function updateIslandBudgetLocal(id: string, v: number) {
-    setIslands((rows) => rows.map((r) => (r.id === id ? { ...r, budget: v } : r)));
-  }
-
-  async function saveIslandBudget(id: string) {
+  async function doTransfer(t: AccountOwnerType, did: string, amount: number, reason: string) {
+    if (!companyAcc || !did || amount <= 0) return;
+    setLoading(true);
     try {
-      const row = islands.find((r) => r.id === id);
-      if (!row) return;
-      const b = Number.isFinite(row.budget) && row.budget >= 0 ? Math.floor(row.budget) : 0;
-      setIslandBudget(companyDid, id, b);
-      toast({ title: "Budget isola aggiornato", description: `Isola ${id} → ${b}` });
-      refreshIslandBudgets();
+      await ensureMemberAccount(t, did, 0);
+      transferBetween(companyAcc, accountId(t, did), Math.floor(amount), { reason });
+      toast({ title: "Trasferimento effettuato" });
+      refreshBalances();
     } catch (e: any) {
-      toast({ title: "Errore budget isola", description: e?.message ?? "Impossibile salvare", variant: "destructive" });
+      toast({ title: "Errore trasferimento", description: e?.message ?? "Impossibile trasferire", variant: "destructive" });
+    } finally { setLoading(false); }
+  }
+
+  async function topupIsland() {
+    if (!companyDid || !islandId || amtIsl <= 0) return;
+    try {
+      const cur = getIslandBudget(companyDid, islandId);
+      const next = Math.max(0, cur + Math.floor(amtIsl));
+      setIslandBudget(companyDid, islandId, next);
+      toast({ title: "Bucket isola ricaricato", description: `${islandId} → ${next}` });
+      setIslands((rows) => rows.map(r => r.id === islandId ? ({ ...r, budget: next }) : r));
+    } catch (e: any) {
+      toast({ title: "Errore bucket isola", description: e?.message ?? "Impossibile salvare", variant: "destructive" });
     }
   }
 
-  const companyBal = balances[companyAcc]?.balance ?? 0;
-  const memberBal = memberAcc ? balances[memberAcc]?.balance ?? 0 : undefined;
+  const companyBal = bal(companyAcc);
+  const opAcc = accStr("operator", opDid);
+  const macAcc = accStr("machine", macDid);
+  const othAcc = otherDid ? accStr(otherType, otherDid) : "";
 
   return (
     <div className="space-y-6">
@@ -228,97 +192,139 @@ export default function CompanyCreditsPage() {
         <CardHeader>
           <CardTitle>Crediti azienda</CardTitle>
         </CardHeader>
+
         <CardContent className="space-y-6">
-          {/* Badges */}
+          {/* Badges riepilogo */}
           <div className="flex flex-wrap items-center gap-2">
             <CreditsBadge actor={{ ownerType: "company", ownerId: companyDid }} showActor={false} />
-            {memberAcc && (
-              <CreditsBadge actor={{ ownerType: memberType, ownerId: memberDid, companyId: companyDid }} showCompany={false} />
-            )}
+            {opAcc && <CreditsBadge actor={{ ownerType: "operator", ownerId: opDid, companyId: companyDid }} showCompany={false} />}
+            {macAcc && <CreditsBadge actor={{ ownerType: "machine", ownerId: macDid, companyId: companyDid }} showCompany={false} />}
+            {othAcc && <CreditsBadge actor={{ ownerType: otherType, ownerId: otherDid, companyId: companyDid }} showCompany={false} />}
           </div>
 
-          {/* Soglia low-balance (azienda) */}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div>
-              <Label>Soglia low-balance</Label>
-              <Input
-                type="number"
-                min={0}
-                value={threshold}
-                onChange={(e) => setThr(Number(e.target.value))}
-              />
-            </div>
-            <div className="grid content-end">
-              <Button variant="outline" onClick={handleThresholdCompany} disabled={!companyAcc || loading}>
-                Imposta soglia
-              </Button>
-            </div>
-            <div className="grid content-end text-xs text-muted-foreground">
-              <div>Azienda: <span className="font-mono">{companyBal}</span></div>
-              {memberAcc && <div>Membro: <span className="font-mono">{memberBal}</span></div>}
+          {/* Soglia low-balance */}
+          <div className="rounded-md border p-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div>
+                <Label>Soglia low-balance</Label>
+                <Input type="number" min={0} value={threshold} onChange={(e) => setThr(Number(e.target.value))} />
+              </div>
+              <div className="grid content-end">
+                <Button variant="outline" onClick={handleThresholdCompany} disabled={!companyAcc || loading}>
+                  Imposta soglia
+                </Button>
+              </div>
+              <div className="grid content-end text-xs text-muted-foreground">
+                <div>Azienda: <span className="font-mono">{companyBal}</span></div>
+              </div>
             </div>
           </div>
 
-          {/* ---------------- Bucket isole ---------------- */}
-          <div className="space-y-2">
-            <Label>Allocazione crediti per isole</Label>
-            <div className="flex gap-2">
-              <Input
-                placeholder="ID isola"
-                value={newIslandId}
-                onChange={(e) => setNewIslandId(e.target.value)}
-                className="w-60"
-              />
-              <Button variant="outline" onClick={addIslandRow}>
-                Aggiungi isola
-              </Button>
+          {/* Griglia operazioni */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Operatore */}
+            <div className="rounded-md border p-4 space-y-3">
+              <div className="text-sm font-medium">Trasferisci a operatore</div>
+              <Select value={opDid} onValueChange={(v) => setOpDid(v)}>
+                <SelectTrigger><SelectValue placeholder="Seleziona operatore" /></SelectTrigger>
+                <SelectContent className="z-[60]">
+                  {operators.length ? operators.map(o => (
+                    <SelectItem key={o.did} value={o.did}>{o.name} — {o.did}</SelectItem>
+                  )) : <div className="px-3 py-2 text-sm text-muted-foreground">Nessun operatore</div>}
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-muted-foreground font-mono">
+                {opAcc || "—"} {opAcc ? `• saldo ${bal(opAcc)}` : ""}
+              </div>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <Input type="number" min={1} value={amtOp} onChange={(e) => setAmtOp(Number(e.target.value))} aria-label="Importo operatore" />
+                <Button onClick={() => doTransfer("operator", opDid, amtOp, "company_to_operator")} disabled={!opDid || amtOp <= 0 || loading}>
+                  Trasferisci
+                </Button>
+              </div>
             </div>
 
-            {islands.length === 0 ? (
+            {/* Macchina */}
+            <div className="rounded-md border p-4 space-y-3">
+              <div className="text-sm font-medium">Trasferisci a macchina</div>
+              <Select value={macDid} onValueChange={(v) => setMacDid(v)}>
+                <SelectTrigger><SelectValue placeholder="Seleziona macchina" /></SelectTrigger>
+                <SelectContent className="z-[60]">
+                  {machines.length ? machines.map(m => (
+                    <SelectItem key={m.did} value={m.did}>{m.name} — {m.did}</SelectItem>
+                  )) : <div className="px-3 py-2 text-sm text-muted-foreground">Nessuna macchina</div>}
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-muted-foreground font-mono">
+                {macAcc || "—"} {macAcc ? `• saldo ${bal(macAcc)}` : ""}
+              </div>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <Input type="number" min={1} value={amtMac} onChange={(e) => setAmtMac(Number(e.target.value))} aria-label="Importo macchina" />
+                <Button onClick={() => doTransfer("machine", macDid, amtMac, "company_to_machine")} disabled={!macDid || amtMac <= 0 || loading}>
+                  Trasferisci
+                </Button>
+              </div>
+            </div>
+
+            {/* Altro */}
+            <div className="rounded-md border p-4 space-y-3">
+              <div className="text-sm font-medium">Altro (creator/admin o DID manuale)</div>
+              <div className="grid sm:grid-cols-3 gap-2">
+                <Select value={otherType} onValueChange={(v: AccountOwnerType) => setOtherType(v)}>
+                  <SelectTrigger><SelectValue placeholder="Tipo" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="creator">creator</SelectItem>
+                    <SelectItem value="admin">admin</SelectItem>
+                    <SelectItem value="operator">operator</SelectItem>
+                    <SelectItem value="machine">machine</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={otherDid} onValueChange={setOtherDid}>
+                  <SelectTrigger><SelectValue placeholder="Seleziona DID" /></SelectTrigger>
+                  <SelectContent className="max-h-72 overflow-auto">
+                    {(otherType === "creator" ? creators
+                      : otherType === "operator" ? operators
+                      : otherType === "machine" ? machines
+                      : members).map(m => (
+                        <SelectItem key={m.did} value={m.did}>{m.name} — {m.did}</SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <Input placeholder="…o DID manuale" value={otherDid} onChange={(e) => setOtherDid(e.target.value)} />
+              </div>
+              <div className="text-xs text-muted-foreground font-mono">
+                {othAcc || "—"} {othAcc ? `• saldo ${bal(othAcc)}` : ""}
+              </div>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <Input type="number" min={1} value={amtOther} onChange={(e) => setAmtOther(Number(e.target.value))} aria-label="Importo altro" />
+                <Button onClick={() => doTransfer(otherType, otherDid, amtOther, "company_to_member")} disabled={!otherDid || amtOther <= 0 || loading}>
+                  Trasferisci
+                </Button>
+              </div>
+            </div>
+
+            {/* Bucket isola */}
+            <div className="rounded-md border p-4 space-y-3">
+              <div className="text-sm font-medium">Bucket isola — ricarica veloce</div>
+              <Select value={islandId} onValueChange={setIslandId}>
+                <SelectTrigger><SelectValue placeholder="Seleziona isola" /></SelectTrigger>
+                <SelectContent>
+                  {islands.length ? islands.map(i => (
+                    <SelectItem key={i.id} value={i.id}>{i.id}</SelectItem>
+                  )) : <div className="px-3 py-2 text-sm text-muted-foreground">Nessuna isola</div>}
+                </SelectContent>
+              </Select>
               <div className="text-xs text-muted-foreground">
-                Nessuna isola configurata. Aggiungi un ID per iniziare.
+                Budget attuale: <span className="font-mono">{islandId ? getIslandBudget(companyDid, islandId) : 0}</span>
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-left text-muted-foreground">
-                    <tr>
-                      <th className="py-2 pr-3">Isola</th>
-                      <th className="py-2 pr-3">Budget attuale</th>
-                      <th className="py-2 pr-3">Imposta nuovo budget</th>
-                      <th className="py-2 pr-3"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {islands.map((r) => (
-                      <tr key={r.id}>
-                        <td className="py-1 pr-3 font-mono">{r.id}</td>
-                        <td className="py-1 pr-3 font-mono">{getIslandBudget(companyDid, r.id)}</td>
-                        <td className="py-1 pr-3">
-                          <Input
-                            type="number"
-                            min={0}
-                            value={r.budget}
-                            onChange={(e) => updateIslandBudgetLocal(r.id, Number(e.target.value))}
-                            className="w-40"
-                          />
-                        </td>
-                        <td className="py-1 pr-3">
-                          <Button size="sm" variant="outline" onClick={() => saveIslandBudget(r.id)}>
-                            Salva
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <Input type="number" min={1} value={amtIsl} onChange={(e) => setAmtIsl(Number(e.target.value))} aria-label="Importo isola" />
+                <Button onClick={topupIsland} disabled={!islandId || amtIsl <= 0 || loading}>
+                  Ricarica bucket
+                </Button>
               </div>
-            )}
+            </div>
           </div>
-          {/* ---------------- /Bucket isole ---------------- */}
-
-          {/* Storico crediti con filtri + Export CSV */}
-          <CreditHistory />
         </CardContent>
       </Card>
     </div>

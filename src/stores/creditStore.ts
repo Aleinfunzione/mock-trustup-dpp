@@ -44,9 +44,7 @@ function readJSON<T>(key: string, fallback: T): T {
 function writeJSON(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // no-op
-  }
+  } catch {}
 }
 function nowISO() {
   return new Date().toISOString();
@@ -128,6 +126,13 @@ function splitAccountId(accId: string): { ownerType?: AccountOwnerType; ownerId?
   if (parts?.length === 3) return { ownerType: parts[1] as AccountOwnerType, ownerId: parts[2] };
   return {};
 }
+function findMemberAccount(ownerId: string): string | undefined {
+  const accs = loadAccounts();
+  for (const a of Object.values(accs)) {
+    if (a.ownerId === ownerId && a.ownerType !== "company" && a.ownerType !== "admin") return a.id;
+  }
+  return undefined;
+}
 
 // ---------- low-balance watcher ----------
 type LowBalanceEvent = { accountId: string; balance: number; threshold: number; ts: string };
@@ -144,7 +149,6 @@ function maybeNotifyLow(acc: CreditAccount, ts: string) {
 }
 
 // ---------- bootstrap / ensure ----------
-/** Inizializza ledger: crea admin e opzionalmente company/members se mancanti. Idempotente. */
 export function initCredits(ctx: {
   adminId: string;
   companyId?: string;
@@ -190,7 +194,6 @@ export function initCredits(ctx: {
   return { created };
 }
 
-/** Crea account company se mancante. Non tocca bilancio se già esiste. */
 export function ensureCompanyAccount(
   companyId: string,
   initialBalance = COMPANY_DEFAULT_CREDITS,
@@ -214,7 +217,6 @@ export function ensureCompanyAccount(
   }
 }
 
-/** Crea account *membro* (creator/operator/machine/admin) se mancante. */
 export function ensureMemberAccount(
   ownerType: AccountOwnerType,
   ownerId: string,
@@ -240,7 +242,6 @@ export function ensureMemberAccount(
   return id;
 }
 
-/** API legacy: crea più account se mancanti (senza seed dedicati). */
 export function ensureAccounts(seed: {
   adminId: string;
   companyIds: string[];
@@ -282,13 +283,11 @@ export function getBalance(accountId: string): number {
   return acc?.balance ?? 0;
 }
 
-/** Elenca tutti gli account o filtra per ownerType. */
 export function listAccounts(filter?: { ownerType?: AccountOwnerType }): CreditAccount[] {
   const all = Object.values(loadAccounts());
   return filter?.ownerType ? all.filter((a) => a.ownerType === filter.ownerType) : all;
 }
 
-/** Ritorna bilanci per id con flag low. */
 export function getBalancesByIds(ids: string[]): Array<{ id: string; balance: number; low: boolean }> {
   const accs = loadAccounts();
   return ids.map((id) => {
@@ -299,7 +298,6 @@ export function getBalancesByIds(ids: string[]): Array<{ id: string; balance: nu
   });
 }
 
-/** Lista transazioni, opzionale filtro account e limit. */
 export function listTransactions(params?: { accountId?: string; limit?: number }): CreditTx[] {
   return history(params);
 }
@@ -467,6 +465,7 @@ type ConsumeRef = {
   productId?: string;
   eventId?: string;
   islandId?: string;
+  assignedToDid?: string; // NEW
 };
 
 // ---------------- core consume ----------------
@@ -483,9 +482,23 @@ function __consumeCore(
   const n = Number.isFinite(qty) && qty > 0 ? qty : 1;
   const cost = round6(unit * n);
 
-  const { payerAccountId, reason } = resolvePayer(action, actor, cost);
+  // 1) priorità membro assegnato
+  let payerAccountId: string | undefined;
+  if (ref?.assignedToDid) {
+    const memberAcc = findMemberAccount(ref.assignedToDid);
+    if (memberAcc) {
+      const bal = loadAccounts()[memberAcc]?.balance ?? 0;
+      if (bal >= cost) payerAccountId = memberAcc;
+    }
+  }
+
+  // 2) fallback catena sponsor
   if (!payerAccountId) {
-    return { ok: false, reason: reason ?? "NO_PAYER", detail: { action, actor, cost } };
+    const r = resolvePayer(action, actor, cost);
+    payerAccountId = r.payerAccountId;
+    if (!payerAccountId) {
+      return { ok: false, reason: r.reason ?? "NO_PAYER", detail: { action, actor, cost } };
+    }
   }
 
   const prevMeta = loadMeta();
@@ -495,16 +508,14 @@ function __consumeCore(
     return { ok: false, reason: "INSUFFICIENT_FUNDS", detail: { payerAccountId, cost, balance: payer.balance } };
   }
 
-  // Island bucket charge (solo se payer è company e abbiamo islandId)
+  // Island bucket charge se payer è company e abbiamo islandId
   let islandBucketCharged = false;
   if (ref?.islandId) {
     const { ownerType, ownerId } = splitAccountId(payerAccountId);
-    const payerIsCompany = ownerType === "company" && ownerId;
-    if (payerIsCompany) {
-      const companyId = ownerId as string;
-      const cur = getIslandBudget(companyId, ref.islandId);
+    if (ownerType === "company" && ownerId) {
+      const cur = getIslandBudget(ownerId, ref.islandId);
       if (cur >= cost) {
-        addToIslandBudget(companyId, ref.islandId, -cost);
+        addToIslandBudget(ownerId, ref.islandId, -cost);
         islandBucketCharged = true;
       }
     }
@@ -527,6 +538,9 @@ function __consumeCore(
       balance_after: nextBalance,
       lowBalance: low,
       islandBucketCharged,
+      payerType:
+        splitAccountId(payerAccountId).ownerType === "company" ? "company" :
+        splitAccountId(payerAccountId).ownerType === "admin" ? "admin" : "member",
     },
   } as any;
 
@@ -542,7 +556,6 @@ function __consumeCore(
 }
 
 // ---------- API pubblica consume ----------
-// Compat: supporta sia firma vecchia (posizionale) sia “a oggetto” usata in events.ts
 export function consume(
   actionOrArgs: CreditAction | { companyId: string; action: CreditAction; ref?: ConsumeRef; islandId?: string },
   actor?: ConsumeActor,
@@ -576,7 +589,6 @@ export function spend(
   qty = 1,
   dedup_key?: string
 ): ConsumeResult {
-  // whitelist azioni Step 1; per altre delega a consume
   if (!SPEND_ACTIONS.includes(action)) {
     return consume(action, actor, ref, qty);
   }
@@ -593,9 +605,23 @@ export function spend(
     }
   }
 
-  const { payerAccountId, reason } = resolvePayer(action, actor, cost);
+  // 1) priorità membro assegnato
+  let payerAccountId: string | undefined;
+  if (ref?.assignedToDid) {
+    const memberAcc = findMemberAccount(ref.assignedToDid);
+    if (memberAcc) {
+      const bal = loadAccounts()[memberAcc]?.balance ?? 0;
+      if (bal >= cost) payerAccountId = memberAcc;
+    }
+  }
+
+  // 2) fallback catena sponsor
   if (!payerAccountId) {
-    return { ok: false, reason: reason ?? "NO_PAYER", detail: { action, actor, cost } };
+    const r = resolvePayer(action, actor, cost);
+    payerAccountId = r.payerAccountId;
+    if (!payerAccountId) {
+      return { ok: false, reason: r.reason ?? "NO_PAYER", detail: { action, actor, cost } };
+    }
   }
 
   const prevMeta = loadMeta();
@@ -622,7 +648,6 @@ export function spend(
   const nextBalance = round6(payer.balance - cost);
   const low = nextBalance <= (payer.lowBalanceThreshold ?? LOW_BALANCE_THRESHOLD);
 
-  // N.B. type = action per tabella/CSV; campi richiesti in meta.
   const tx: CreditTx = {
     id: txId("spend"),
     ts,
@@ -640,6 +665,9 @@ export function spend(
       balance_after: nextBalance,
       lowBalance: low,
       islandBucketCharged,
+      payerType:
+        splitAccountId(payerAccountId).ownerType === "company" ? "company" :
+        splitAccountId(payerAccountId).ownerType === "admin" ? "admin" : "member",
       dedup_key: dk,
     },
   } as any;

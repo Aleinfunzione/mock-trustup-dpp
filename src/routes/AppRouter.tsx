@@ -20,12 +20,13 @@ import CompanyCompliancePage from "@/pages/company/CompanyCompliancePage";
 import OrganizationCredentialPage from "@/pages/company/OrganizationCredentialPage";
 import CompanyCreditsPage from "@/pages/company/CompanyCreditsPage";
 import CompanyOrganizationPage from "@/pages/company/CompanyOrganizationPage";
+import CreditsHistoryPage from "@/pages/company/CreditsHistoryPage";
 
 // Admin
 import AdminCreditsPage from "@/pages/admin/AdminCreditsPage";
 
 // Creator
-import CreatorEventsPage from "@/pages/events/CreatorEventsPage";
+import CreatorEventsKPI, { CreatorEventsCreate, CreatorEventsTimeline } from "@/pages/events/CreatorEventsPage";
 import CreatorProductsPage from "@/pages/products/CreatorProductsPage";
 import CreatorAttributesCatalogPage from "@/pages/creator/CreatorAttributesCatalogPage";
 
@@ -34,7 +35,7 @@ import ProductsPage from "@/pages/products/ProductsPage";
 import ProductDetailPage from "@/pages/products/ProductDetailPage";
 import ProductAttributesPage from "@/pages/products/ProductAttributesPage";
 import ProductCredentialsPage from "@/pages/products/ProductCredentialsPage";
-import DPPViewerPage from "@/components/credentials/DPPViewerPage"
+import DPPViewerPage from "@/components/credentials/DPPViewerPage";
 
 // Viewer VP
 import VPViewerPage from "@/pages/viewer/VPViewerPage";
@@ -127,6 +128,14 @@ export default function AppRouter() {
             }
           />
           <Route
+            path="/company/credits/history"
+            element={
+              <RequireRole role="company">
+                <CreditsHistoryPage />
+              </RequireRole>
+            }
+          />
+          <Route
             path="/company/products"
             element={
               <RequireRole role="company">
@@ -172,7 +181,23 @@ export default function AppRouter() {
             path="/creator/events"
             element={
               <RequireRole role="creator">
-                <CreatorEventsPage />
+                <CreatorEventsKPI />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/creator/events/create"
+            element={
+              <RequireRole role="creator">
+                <CreatorEventsCreate />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/creator/events/timeline"
+            element={
+              <RequireRole role="creator">
+                <CreatorEventsTimeline />
               </RequireRole>
             }
           />
@@ -213,14 +238,6 @@ export default function AppRouter() {
             element={
               <RequireRole role="creator">
                 <DPPViewerPage />
-              </RequireRole>
-            }
-          />
-          <Route
-            path="/creator/attributes"
-            element={
-              <RequireRole role="creator">
-                <CreatorAttributesCatalogPage />
               </RequireRole>
             }
           />
