@@ -24,11 +24,15 @@ import CreditsHistoryPage from "@/pages/company/CreditsHistoryPage";
 
 // Admin
 import AdminCreditsPage from "@/pages/admin/AdminCreditsPage";
+import AdminCreditsHistoryPage from "@/pages/admin/CreditsHistoryPage"; // NEW
 
 // Creator
-import CreatorEventsKPI, { CreatorEventsCreate, CreatorEventsTimeline } from "@/pages/events/CreatorEventsPage";
+import CreatorEventsKPI from "@/pages/creator/events";
+import CreatorEventsTimeline from "@/pages/creator/events/timeline";
+import CreatorEventCreatePage from "@/pages/creator/events/create";
 import CreatorProductsPage from "@/pages/products/CreatorProductsPage";
 import CreatorAttributesCatalogPage from "@/pages/creator/CreatorAttributesCatalogPage";
+import CreatorCreditsHistoryPage from "@/pages/creator/CreditsHistoryPage"; // NEW
 
 // Prodotti
 import ProductsPage from "@/pages/products/ProductsPage";
@@ -64,6 +68,14 @@ export default function AppRouter() {
               <RequireRole role="admin">
                 <AdminCreditsPage />
               </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/credits/history"
+            element={
+                <RequireRole role="admin">
+                  <AdminCreditsHistoryPage />
+                </RequireRole>
             }
           />
 
@@ -189,7 +201,7 @@ export default function AppRouter() {
             path="/creator/events/create"
             element={
               <RequireRole role="creator">
-                <CreatorEventsCreate />
+                <CreatorEventCreatePage />
               </RequireRole>
             }
           />
@@ -198,6 +210,14 @@ export default function AppRouter() {
             element={
               <RequireRole role="creator">
                 <CreatorEventsTimeline />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/creator/credits/history"
+            element={
+              <RequireRole role="creator">
+                <CreatorCreditsHistoryPage />
               </RequireRole>
             }
           />

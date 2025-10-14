@@ -70,11 +70,11 @@ export function createEvent(
     | (Omit<ProductEvent, "id" | "timestamp" | "createdAt"> & { notes?: string })
     | EventCreateInput
 ): ProductEvent {
-  const hasId = !!(input as any)?.id;
-  const id = hasId ? (input as any).id : `evt_${randomHex(10)}`;
-  const now = nowISO();
-
   const i: any = input;
+
+  // usa l'id fornito se presente per allineare dedup e riferimenti
+  const id = (i?.id as string) || `evt_${randomHex(10)}`;
+  const now = nowISO();
   const status: EventStatus = coalesceStatus(i.status ?? i.data?.status ?? "done");
 
   const evt: ProductEvent = {
@@ -97,66 +97,67 @@ export function createEvent(
       status,
       assignedToDid: i.assignedToDid ?? i.data?.assignedToDid,
       islandId: i.islandId ?? i.data?.islandId,
-      txRef: i.txRef ?? i.data?.txRef, // onora txRef preesistente
+      txRef: i.data?.txRef, // solo riferimento, nessun addebito qui
     },
     related: i.related,
   };
 
-  // Billing idempotente: esegui SOLO se txRef assente
+  // Billing idempotente con spend + dedup sulla coppia (action, eventId)
   try {
-    const alreadyPaid = !!(evt.data as any)?.txRef;
-    if (!alreadyPaid) {
-      const islandForBilling = evt.islandId ?? evt.data?.islandId ?? null;
-      const ref: any = {
-        type: "event",
-        id: evt.id,
-        productId: evt.productId,
-        eventType: evt.type,
-        status: evt.status,
-        assignedToDid: evt.assignedToDid || evt.data?.assignedToDid,
-        islandId: islandForBilling || undefined,
+    const action = mapEventToCreditAction(evt.type as string);
+    const islandForBilling = evt.islandId ?? evt.data?.islandId ?? null;
+
+    const ref: any = {
+      type: "event",
+      id: evt.id,
+      productId: evt.productId,
+      eventType: evt.type,
+      status: evt.status,
+      assignedToDid: evt.assignedToDid || evt.data?.assignedToDid,
+      islandId: islandForBilling || undefined,
+    };
+
+    const actor: any = {
+      ownerType: "company",
+      ownerId: evt.companyDid,
+      companyId: evt.companyDid,
+    };
+
+    const dedup = `${action}:${evt.id}`;
+    const res: any =
+      typeof (creditStore as any)?.spend === "function"
+        ? (creditStore as any).spend(action, actor, ref, 1, dedup)
+        : null;
+
+    if (res && res.ok) {
+      const cost = Number(res.cost);
+      const bucketId = res.bucketId as string | undefined;
+      const txId = (res.tx && (res.tx.id || res.tx.txId)) as string | undefined;
+      const payerType = (res.tx as any)?.meta?.payerType as string | undefined;
+
+      (evt as any).cost = Number.isFinite(cost) ? cost : undefined;
+      (evt as any).meta = {
+        ...(evt as any).meta,
+        islandBucketCharged: bucketId,
+        payerType,
+        txId,
       };
 
-      const action = mapEventToCreditAction(evt.type as string);
-      const actor = {
-        ownerType: "company",
-        ownerId: evt.companyDid,
-        companyId: evt.companyDid,
-      } as any;
-
-      const res: any =
-        typeof (creditStore as any)?.spend === "function"
-          ? (creditStore as any).spend(action, actor, ref, 1, `${action}:${evt.id}`)
-          : null;
-
-      if (res && res.ok) {
-        const cost = Number(res.cost);
-        const bucketId = res.bucketId as string | undefined;
-        const txId = (res.tx && (res.tx.id || res.tx.txId)) as string | undefined;
-        const payerType = (res.tx as any)?.meta?.payerType as string | undefined;
-
-        (evt as any).cost = Number.isFinite(cost) ? cost : undefined;
-        (evt as any).meta = {
-          ...(evt as any).meta,
+      evt.data = {
+        ...(evt.data ?? {}),
+        billing: {
+          ...(evt.data?.billing ?? {}),
+          cost: (evt as any).cost,
           islandBucketCharged: bucketId,
           payerType,
           txId,
-        };
-
-        evt.data = {
-          ...(evt.data ?? {}),
-          billing: {
-            ...(evt.data as any)?.billing,
-            cost: (evt as any).cost,
-            islandBucketCharged: bucketId,
-            payerType,
-            txId,
-          },
-          txRef: txId ?? (evt.data as any)?.txRef,
-        };
-      }
+        },
+        txRef: evt.data?.txRef ?? txId,
+      };
     }
-  } catch {}
+  } catch {
+    // best-effort: ignora errori di billing
+  }
 
   const map = getEventsMap();
   map[id] = evt;

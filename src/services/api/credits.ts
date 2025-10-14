@@ -23,12 +23,35 @@ import type {
   ConsumeResult as _ConsumeResult,
 } from "@/types/credit";
 
+/* ---------------------------------------------------------------------------------- */
+/* Types & const                                                                      */
+/* ---------------------------------------------------------------------------------- */
+
 export type InitSeed = {
   adminId: string;
   companyIds: string[];
   members: { type: AccountOwnerType; id: string }[];
   defaults?: { balance?: number; threshold?: number };
 };
+
+export const CREDIT_ERRORS = {
+  INSUFFICIENT_FUNDS: "INSUFFICIENT_FUNDS",
+  NO_PAYER: "NO_PAYER",
+  RACE_CONDITION: "RACE_CONDITION",
+} as const;
+
+type ConsumeRef = {
+  kind?: string;
+  id?: string;
+  productId?: string;
+  eventId?: string;
+  islandId?: string;
+  actorDid?: string;
+} & Record<string, any>;
+
+/* ---------------------------------------------------------------------------------- */
+/* Boot / setup                                                                       */
+/* ---------------------------------------------------------------------------------- */
 
 export function initCredits(seed: InitSeed) {
   const firstCompany = seed.companyIds?.[0];
@@ -39,17 +62,31 @@ export function initCredits(seed: InitSeed) {
     companyDefault: seed.defaults?.balance,
     defaultThreshold: seed.defaults?.threshold,
   });
+
   if (seed.companyIds && seed.companyIds.length > 1) {
     for (const cid of seed.companyIds.slice(1)) {
       ensureCompanyAccount(cid, seed.defaults?.balance, seed.defaults?.threshold);
     }
   }
+
   ensureAccounts({
     adminId: seed.adminId,
     companyIds: seed.companyIds,
     memberIds: seed.members,
     defaults: seed.defaults,
   });
+}
+
+/* ---------------------------------------------------------------------------------- */
+/* Read APIs                                                                          */
+/* ---------------------------------------------------------------------------------- */
+
+export function listAccounts(params?: {
+  ownerType?: AccountOwnerType;
+  companyId?: string;
+  ownerId?: string;
+}) {
+  return storeListAccounts(params);
 }
 
 export function getBalances(accountIds: string[]) {
@@ -60,11 +97,20 @@ export function getAccountBalance(accountId: string) {
   return storeGetBalance(accountId);
 }
 
-export function simulate(
-  action: CreditAction,
-  actor: ConsumeActor,
-  qty = 1
-) {
+export function accountId(ownerType: AccountOwnerType, ownerId: string) {
+  return getAccountId(ownerType, ownerId);
+}
+
+/** Fallback: aziende presenti nel ledger crediti (se Identity non risponde). */
+export function listCompanyAccounts(): Array<{ did: string }> {
+  return storeListAccounts({ ownerType: "company" }).map((a) => ({ did: a.ownerId }));
+}
+
+/* ---------------------------------------------------------------------------------- */
+/* Simulation / spend                                                                 */
+/* ---------------------------------------------------------------------------------- */
+
+export function simulate(action: CreditAction, actor: ConsumeActor, qty = 1) {
   return storeSimulate(action, actor, qty);
 }
 
@@ -102,7 +148,7 @@ export function simulateCost(
 
   const res = storeSimulate(action, actor, qty);
   if (!res.payer) {
-    const reason = String(res.reason ?? "INSUFFICIENT_FUNDS");
+    const reason = String(res.reason ?? CREDIT_ERRORS.INSUFFICIENT_FUNDS);
     const err: any = new Error(reason);
     err.code = reason;
     throw err;
@@ -113,40 +159,27 @@ export function simulateCost(
 function isErr(res: _ConsumeResult): res is Extract<_ConsumeResult, { ok: false }> {
   return res.ok === false;
 }
-function normalizeReason(reason?: string, detail?: any): "INSUFFICIENT_FUNDS" | "NO_PAYER" | "RACE_CONDITION" {
-  if (reason === "INSUFFICIENT_FUNDS" || reason === "NO_PAYER") return reason;
+function normalizeReason(
+  reason?: string,
+  detail?: any
+): (typeof CREDIT_ERRORS)[keyof typeof CREDIT_ERRORS] {
+  if (reason === CREDIT_ERRORS.INSUFFICIENT_FUNDS || reason === CREDIT_ERRORS.NO_PAYER) return reason;
   const d = typeof detail === "string" ? detail : JSON.stringify(detail || {});
-  if (d.includes("Race condition")) return "RACE_CONDITION";
-  return "NO_PAYER";
+  if (d.includes("Race condition")) return CREDIT_ERRORS.RACE_CONDITION;
+  return CREDIT_ERRORS.NO_PAYER;
 }
-
-type ConsumeRef = {
-  kind?: string;
-  id?: string;
-  productId?: string;
-  eventId?: string;
-  islandId?: string;
-  actorDid?: string;
-} & Record<string, any>;
 
 export function consumeForAction(
   action: CreditAction,
   actor: ConsumeActor,
   ref?: ConsumeRef,
   qty = 1
-): { ok: true; tx: CreditTx; payerAccountId: string } | { ok: false; reason: "INSUFFICIENT_FUNDS" | "NO_PAYER" | "RACE_CONDITION"; detail?: any } {
+):
+  | { ok: true; tx: CreditTx; payerAccountId: string }
+  | { ok: false; reason: (typeof CREDIT_ERRORS)[keyof typeof CREDIT_ERRORS]; detail?: any } {
   const res = storeConsume(action, actor, ref, qty);
   if (isErr(res)) return { ok: false, reason: normalizeReason(String(res.reason), res.detail), detail: res.detail };
   return { ok: true, tx: res.tx, payerAccountId: res.payerAccountId! };
-}
-
-// alias espliciti richiesti
-export function grant(toAccountId: string, amount: number, meta?: any) {
-  return topup(toAccountId, amount, meta);
-}
-
-export function transferBetween(fromAccountId: string, toAccountId: string, amount: number, meta?: any) {
-  return transfer(fromAccountId, toAccountId, amount, meta);
 }
 
 export function spend(
@@ -155,14 +188,24 @@ export function spend(
   ref?: ConsumeRef,
   qty = 1,
   dedup_key?: string
-): { ok: true; tx: CreditTx; payerAccountId: string } | { ok: false; reason: "INSUFFICIENT_FUNDS" | "NO_PAYER" | "RACE_CONDITION"; detail?: any } {
+):
+  | { ok: true; tx: CreditTx; payerAccountId: string }
+  | { ok: false; reason: (typeof CREDIT_ERRORS)[keyof typeof CREDIT_ERRORS]; detail?: any } {
   const res = storeSpend(action, actor, ref, qty, dedup_key);
   if (isErr(res)) return { ok: false, reason: normalizeReason(String(res.reason), res.detail), detail: res.detail };
   return { ok: true, tx: res.tx, payerAccountId: res.payerAccountId! };
 }
 
-export function listTransactions(params?: { accountId?: string; limit?: number }) {
-  return history(params);
+/* ---------------------------------------------------------------------------------- */
+/* Mutations                                                                          */
+/* ---------------------------------------------------------------------------------- */
+
+export function grant(toAccountId: string, amount: number, meta?: any) {
+  return topup(toAccountId, amount, meta);
+}
+
+export function transferBetween(fromAccountId: string, toAccountId: string, amount: number, meta?: any) {
+  return transfer(fromAccountId, toAccountId, amount, meta);
 }
 
 export function topupAccount(toAccountId: string, amount: number, meta?: any) {
@@ -176,9 +219,17 @@ export function setThreshold(accountId: string, threshold: number) {
   setLowBalanceThreshold(accountId, threshold);
 }
 
-export function accountId(ownerType: AccountOwnerType, ownerId: string) {
-  return getAccountId(ownerType, ownerId);
+/* ---------------------------------------------------------------------------------- */
+/* History                                                                            */
+/* ---------------------------------------------------------------------------------- */
+
+export function listTransactions(params?: { accountId?: string; limit?: number }) {
+  return history(params);
 }
+
+/* ---------------------------------------------------------------------------------- */
+/* Accounts helpers                                                                    */
+/* ---------------------------------------------------------------------------------- */
 
 /** Crea (se mancante) l’account del membro: creator/operator/machine/admin. */
 export function ensureMemberAccount(
@@ -188,9 +239,4 @@ export function ensureMemberAccount(
   threshold?: number
 ) {
   return storeEnsureMemberAccount(ownerType, ownerId, initialBalance, threshold);
-}
-
-/** Fallback: aziende presenti nel ledger crediti (se Identity non risponde). */
-export function listCompanyAccounts(): Array<{ did: string }> {
-  return storeListAccounts({ ownerType: "company" }).map((a) => ({ did: a.ownerId }));
 }

@@ -1,4 +1,3 @@
-// src/components/layout/DashboardLayout.tsx
 import * as React from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
@@ -13,9 +12,8 @@ export default function DashboardLayout() {
   const { currentUser } = useAuthStore();
   const isAdmin = (currentUser?.role || "").toLowerCase() === "admin";
 
-  // Prefetch schemi su mount, con cancel su unmount
   React.useEffect(() => {
-    const cancel = prefetchOnIdle(); // usa registry di default
+    const cancel = prefetchOnIdle();
     return () => cancel();
   }, []);
 
@@ -24,28 +22,25 @@ export default function DashboardLayout() {
       <Header />
       <LowBalanceWatcher />
       <div className="flex flex-1 min-h-0">
-        {/* Colonna sinistra */}
+        {/* Sidebar */}
         <aside className="w-72 shrink-0">
-          {/* Contenitore sticky sotto l'header */}
-          <div className="sticky top-14 z-50 h-[calc(100vh-3.5rem)] border-r bg-card/50 flex flex-col">
+          <div className="sticky top-14 h-[calc(100vh-3.5rem)] border-r border-sidebar-border bg-sidebar flex flex-col">
             {isAdmin && (
-              <div className="p-3 border-b bg-background/60">
+              <div className="p-3 border-b border-sidebar-border bg-sidebar">
                 <div className="text-xs text-muted-foreground mb-1">Saldo Admin</div>
                 <CreditBalance />
               </div>
             )}
-            {/* Scroll interno solo se il menu supera l’altezza */}
             <div className="flex-1 overflow-y-auto">
               <Sidebar />
             </div>
           </div>
         </aside>
 
-        {/* Contenuto scrollabile */}
+        {/* Main */}
         <main
-          className="flex-1 min-h-0 h-[calc(100vh-3.5rem)] overflow-y-auto relative z-0 isolate"
+          className="flex-1 min-h-0 h-[calc(100vh-3.5rem)] overflow-y-auto relative"
           aria-live="polite"
-          aria-busy="false"
         >
           <div className="p-4 md:p-6">
             <Outlet key={location.pathname} />

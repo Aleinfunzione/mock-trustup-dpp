@@ -66,12 +66,12 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0.001 106.423);
-  --sidebar-foreground: oklch(0.147 0.004 49.25);
+  --sidebar: oklch(0.216 0.006 56.043);
+  --sidebar-foreground: oklch(0.985 0.001 106.423);
   --sidebar-primary: oklch(0.216 0.006 56.043);
   --sidebar-primary-foreground: oklch(0.985 0.001 106.423);
-  --sidebar-accent: oklch(0.97 0.001 106.424);
-  --sidebar-accent-foreground: oklch(0.216 0.006 56.043);
+  --sidebar-accent: oklch(0.268 0.007 34.298);
+  --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
   --sidebar-border: oklch(0.923 0.003 48.717);
   --sidebar-ring: oklch(0.709 0.01 56.259);
 }
@@ -111,10 +111,23 @@
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+  /* Mantieni solo il colore dei bordi globale */
+  * { @apply border-border; }
+
+  /* Applica l'outline SOLO quando serve accessibilità */
+  :is(a, button, [role="button"], [tabindex]):focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring), transparent 40%);
+    outline-offset: 2px;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
+
+  body { @apply bg-background text-foreground; }
+}
+
+/* Scoping opzionale per controlli dentro la sidebar */
+.sidebar :is(a,button) {
+  -webkit-tap-highlight-color: transparent;
+}
+.sidebar :is(a,button):focus,
+.sidebar :is(a,button):focus-visible {
+  outline: none;
 }

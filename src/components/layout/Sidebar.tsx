@@ -1,7 +1,22 @@
 // src/components/layout/Sidebar.tsx
-import { NavLink, useLocation } from "react-router-dom";
 import * as React from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import {
+  Sidebar as UISidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
+  SidebarRail,
+} from "@/components/ui/sidebar";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { ChevronRight } from "lucide-react";
 
 type NavItem = { to: string; label: string; children?: NavItem[] };
 
@@ -9,17 +24,18 @@ const NAV: Record<string, NavItem[]> = {
   admin: [
     { to: "/admin", label: "Dashboard" },
     { to: "/admin/credits", label: "Crediti" },
+    { to: "/admin/credits/history", label: "Storico crediti" },
   ],
   company: [
     { to: "/company", label: "Dashboard" },
     { to: "/company/products", label: "Prodotti" },
-    { to: "/company/events", label: "Eventi" },
+    { to: "/company/events", label: "Eventi" }, // nessun sottomenu per ora
     { to: "/company/org", label: "Organizzazione" },
     { to: "/company/attributes", label: "Attributi azienda" },
     { to: "/company/compliance", label: "Compliance" },
     { to: "/company/credentials", label: "Credenziali org" },
     { to: "/company/credits", label: "Crediti" },
-    { to: "/company/credits/history", label: "Storico crediti" }, // NEW
+    { to: "/company/credits/history", label: "Storico crediti" },
   ],
   creator: [
     { to: "/creator", label: "Dashboard" },
@@ -34,6 +50,11 @@ const NAV: Record<string, NavItem[]> = {
       ],
     },
     { to: "/creator/attributes", label: "Catalogo attributi" },
+    {
+      to: "/creator/credits",
+      label: "Crediti",
+      children: [{ to: "/creator/credits/history", label: "Storico crediti" }],
+    },
   ],
   operator: [{ to: "/operator", label: "Dashboard" }],
   machine: [{ to: "/machine", label: "Dashboard" }],
@@ -45,79 +66,66 @@ export default function Sidebar() {
   const role = currentUser?.role ?? "creator";
   const items = NAV[role] ?? [];
 
-  const [open, setOpen] = React.useState<Record<string, boolean>>({});
-
-  React.useEffect(() => {
-    const next: Record<string, boolean> = {};
-    for (const it of items) {
-      if (it.children?.length) {
-        next[it.to] = pathname === it.to || pathname.startsWith(it.to + "/");
-      }
-    }
-    setOpen((s) => ({ ...s, ...next }));
-  }, [pathname, role, items]);
-
-  const toggle = (key: string) => setOpen((s) => ({ ...s, [key]: !s[key] }));
-  const isActive = (to: string) => pathname === to || pathname.startsWith(to + "/");
+  const isExact = (to: string) => pathname === to;
+  const isGroupActive = (it: NavItem) => isExact(it.to) || (it.children ?? []).some((c) => isExact(c.to));
 
   return (
-    <nav className="p-3 space-y-1">
-      {items.map((i) => {
-        const active = isActive(i.to);
-        if (!i.children?.length) {
-          return (
-            <NavLink
-              key={i.to}
-              to={i.to}
-              className={
-                "block rounded-xl px-3 py-2 text-sm " +
-                (active ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground")
-              }
-            >
-              {i.label}
-            </NavLink>
-          );
-        }
-        const openGroup = !!open[i.to];
-        return (
-          <div key={i.to} className="space-y-1">
-            <button
-              type="button"
-              onClick={() => toggle(i.to)}
-              className={
-                "w-full text-left rounded-xl px-3 py-2 text-sm transition " +
-                (active ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground")
-              }
-              aria-expanded={openGroup}
-              aria-controls={`group-${i.to}`}
-            >
-              <span className="inline-flex items-center gap-2">
-                <span className={"transition-transform " + (openGroup ? "rotate-90" : "")}>▸</span>
-                {i.label}
-              </span>
-            </button>
-            {openGroup && (
-              <div id={`group-${i.to}`} className="ml-5 space-y-1">
-                {i.children.map((c) => {
-                  const childActive = isActive(c.to);
+    <UISidebar>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {items.map((i) => {
+                const hasChildren = !!i.children?.length;
+
+                if (!hasChildren) {
                   return (
-                    <NavLink
-                      key={c.to}
-                      to={c.to}
-                      className={
-                        "block rounded-lg px-3 py-1.5 text-sm " +
-                        (childActive ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground")
-                      }
-                    >
-                      {c.label}
-                    </NavLink>
+                    <SidebarMenuItem key={i.to}>
+                      <SidebarMenuButton asChild isActive={isExact(i.to)}>
+                        <NavLink to={i.to} end>
+                          <span>{i.label}</span>
+                        </NavLink>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
                   );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </nav>
+                }
+
+                return (
+                  <Collapsible
+                    key={i.to}
+                    defaultOpen={isGroupActive(i)}
+                    className="group/collapsible"
+                  >
+                    <SidebarMenuItem>
+                      <CollapsibleTrigger asChild>
+                        <SidebarMenuButton>
+                          <span>{i.label}</span>
+                          <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                        </SidebarMenuButton>
+                      </CollapsibleTrigger>
+
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          {i.children!.map((c) => (
+                            <SidebarMenuSubItem key={c.to}>
+                              <SidebarMenuSubButton asChild isActive={isExact(c.to)}>
+                                <NavLink to={c.to} end>
+                                  <span>{c.label}</span>
+                                </NavLink>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </SidebarMenuItem>
+                  </Collapsible>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarRail />
+    </UISidebar>
   );
 }

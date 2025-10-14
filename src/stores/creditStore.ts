@@ -21,10 +21,8 @@ import type {
 } from "@/types/credit";
 import { STORAGE_KEYS } from "@/utils/constants";
 
-type AccountsIndex = Record<string, CreditAccount>;
-type Meta = { version: number; counter: number };
+/* ============================ Policy (config) ============================ */
 
-// -------- policy (configurabile) --------
 const DEFAULT_POLICY: ChargePolicyCfg = {
   preferIsland: true,
   preferActor: true,
@@ -40,7 +38,10 @@ export function getChargePolicy(): Required<ChargePolicyCfg> {
   };
 }
 
-// -------- island buckets (allocazioni per isola) --------
+/* ============================ Storage schema ============================ */
+
+type AccountsIndex = Record<string, CreditAccount>;
+type Meta = { version: number; counter: number };
 type IslandBuckets = Record<string /*companyId*/, Record<string /*islandId*/, number /*credits*/>>;
 
 const KEYS = {
@@ -50,7 +51,8 @@ const KEYS = {
   ISLAND_BUCKETS: "trustup:credits:islandBuckets",
 };
 
-// ---------- storage utils ----------
+/* ============================ Utils ============================ */
+
 function readJSON<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -94,13 +96,12 @@ function bumpCounter(): number {
 function txId(prefix = "tx"): string {
   return `${prefix}_${Date.now()}_${bumpCounter()}`;
 }
-
-// decimals helper
 function round6(n: number) {
   return Math.round((n + Number.EPSILON) * 1e6) / 1e6;
 }
 
-// ---------- island bucket helpers ----------
+/* ====================== Island bucket helpers ====================== */
+
 function loadIslandBuckets(): IslandBuckets {
   return readJSON<IslandBuckets>(KEYS.ISLAND_BUCKETS, {});
 }
@@ -125,7 +126,8 @@ export function addToIslandBudget(companyId: string, islandId: string, delta: nu
   setIslandBudget(companyId, islandId, round6(next));
 }
 
-// ---------- identity helpers ----------
+/* ============================ Identity helpers ============================ */
+
 export function getAccountId(ownerType: AccountOwnerType, ownerId: string): string {
   return `acc:${ownerType}:${ownerId}`;
 }
@@ -152,7 +154,8 @@ function findMemberAccount(ownerId: string): string | undefined {
   return undefined;
 }
 
-// ---------- low-balance watcher ----------
+/* ========================= Low-balance watcher ========================= */
+
 type LowBalanceEvent = { accountId: string; balance: number; threshold: number; ts: string };
 const lowBalanceWatchers = new Set<(e: LowBalanceEvent) => void>();
 export function onLowBalance(cb: (e: LowBalanceEvent) => void) {
@@ -166,7 +169,8 @@ function maybeNotifyLow(acc: CreditAccount, ts: string) {
   }
 }
 
-// ---------- bootstrap / ensure ----------
+/* ===================== Bootstrap / ensure accounts ===================== */
+
 export function initCredits(ctx: {
   adminId: string;
   companyId?: string;
@@ -295,7 +299,8 @@ export function ensureAccounts(seed: {
   saveAll(accounts, tx, meta);
 }
 
-// ---------- reads ----------
+/* =============================== Reads =============================== */
+
 export function getBalance(accountId: string): number {
   const acc = loadAccounts()[accountId];
   return acc?.balance ?? 0;
@@ -324,7 +329,14 @@ export function history(params?: { accountId?: string; limit?: number }): Credit
   const all = loadTx();
   let list = all;
   if (params?.accountId) {
-    list = all.filter((t) => (t as any).fromAccountId === params.accountId || (t as any).toAccountId === params.accountId);
+    const id = params.accountId;
+    list = all.filter(
+      (t: any) =>
+        (t as any).accountId === id ||
+        (t as any).fromAccountId === id ||
+        (t as any).toAccountId === id ||
+        (t as any).payerAccountId === id
+    );
   }
   if (params?.limit && params.limit > 0) return list.slice(-params.limit);
   return list;
@@ -337,7 +349,8 @@ export function isLowBalance(accountId: string): boolean {
   return acc.balance <= thr;
 }
 
-// ---------- writes ----------
+/* =============================== Writes =============================== */
+
 function persistAccountsAndTx(nextAccounts: AccountsIndex, appendedTx: CreditTx[], prevMeta: Meta, retries = 2) {
   const nextTx = [...loadTx(), ...appendedTx];
   for (let i = 0; i <= retries; i++) {
@@ -426,7 +439,8 @@ export function setLowBalanceThreshold(accountId: string, threshold: number) {
 }
 export const setThreshold = setLowBalanceThreshold;
 
-// ---------- dedup helpers ----------
+/* ============================ Dedup helpers ============================ */
+
 function makeDedupKey(action: CreditAction, ref?: { id?: string; eventId?: string; productId?: string }): string | undefined {
   const base = ref?.eventId || ref?.id || "";
   if (!base) return undefined;
@@ -436,7 +450,8 @@ function findByDedup(dedup: string): CreditTx | undefined {
   return loadTx().find((t) => (t as any)?.meta?.dedup_key === dedup);
 }
 
-// ---------- ref type ----------
+/* ============================ Consume types ============================ */
+
 type ConsumeRef = {
   kind?: string;
   id?: string;
@@ -447,7 +462,8 @@ type ConsumeRef = {
   [k: string]: any;
 };
 
-// ---------- sponsor/payer resolution (policy-aware) ----------
+/* ================= Sponsor/payer resolution (policy-aware) =============== */
+
 function buildChain(action: CreditAction, actor: ConsumeActor): string[] {
   const rule: SponsorshipRule | undefined = SPONSORSHIP[action];
   const cfg = getChargePolicy();
@@ -519,7 +535,8 @@ export function simulate(
   };
 }
 
-// ---------------- core consume ----------------
+/* ============================== Consume core ============================== */
+
 function __consumeCore(
   action: CreditAction,
   actor: ConsumeActor,
@@ -589,7 +606,8 @@ function __consumeCore(
   return result as ConsumeResultOk;
 }
 
-// ---------- API pubblica consume ----------
+/* ============================ Public consume ============================ */
+
 export function consume(
   actionOrArgs: CreditAction | { companyId: string; action: CreditAction; ref?: ConsumeRef; islandId?: string },
   actor?: ConsumeActor,
@@ -609,7 +627,8 @@ export function consume(
   return __consumeCore(actionOrArgs as CreditAction, actor as ConsumeActor, ref, qty);
 }
 
-// ---------- spend (idempotente) ----------
+/* ================================ Spend ================================= */
+
 const SPEND_ACTIONS: CreditAction[] = [
   "ASSIGNMENT_CREATE",
   "TELEMETRY_PACKET",
@@ -697,7 +716,8 @@ export function spend(
   return result as ConsumeResultOk;
 }
 
-// ---------- maintenance ----------
+/* ============================= Maintenance ============================= */
+
 export function __resetAll() {
   writeJSON(KEYS.ACCOUNTS, {});
   writeJSON(KEYS.TX, []);

@@ -1,5 +1,6 @@
 // src/pages/company/CompanyCreditsPage.tsx
 import * as React from "react";
+import { Link } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -26,9 +27,6 @@ import { getIslandBudget, setIslandBudget } from "@/stores/creditStore";
 
 type Bal = { id: string; balance: number; low?: boolean };
 type Actor = { did: string; role?: string; name?: string };
-type IslandRow = { id: string; budget: number };
-
-const UI_KEY = "trustup:companyCredits:ui";
 
 function roleToOwnerType(role?: string): AccountOwnerType {
   const r = (role || "").toLowerCase();
@@ -69,6 +67,8 @@ async function loadCompanyActors(companyDid: string): Promise<Actor[]> {
   }
 }
 
+type IslandRow = { id: string; budget: number };
+
 export default function CompanyCreditsPage() {
   const { currentUser } = useAuthStore();
   const { toast } = useToast();
@@ -104,46 +104,16 @@ export default function CompanyCreditsPage() {
   const [balances, setBalances] = React.useState<Record<string, Bal>>({});
   const [loading, setLoading] = React.useState(false);
 
-  // ---- boot: querystring + localStorage ----
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const savedRaw = localStorage.getItem(UI_KEY);
-      const saved = savedRaw ? JSON.parse(savedRaw) : {};
-      const pick = <T,>(k: string, fallback: T): T => {
-        const qs = params.get(k);
-        return (qs as any) ?? (saved?.[k] as any) ?? fallback;
-      };
-      setOpDid(String(pick("op", "")));
-      setMacDid(String(pick("mac", "")));
-      setOtherDid(String(pick("oth", "")));
-      const ot = String(pick("othType", "creator"));
-      if (ot === "creator" || ot === "admin" || ot === "operator" || ot === "machine") setOtherType(ot as AccountOwnerType);
-      setIslandId(String(pick("isl", "")));
-
-      const n = (x: any, d: number) => {
-        const v = Number(x);
-        return Number.isFinite(v) && v >= 0 ? v : d;
-      };
-      setAmtOp(n(pick("amtOp", 10), 10));
-      setAmtMac(n(pick("amtMac", 10), 10));
-      setAmtOther(n(pick("amtOther", 10), 10));
-      setAmtIsl(n(pick("amtIsl", 10), 10));
-      setThr(n(pick("thr", 10), 10));
-    } catch {}
-  }, []);
-
   // init attori
   React.useEffect(() => {
     if (!companyDid) return;
     loadCompanyActors(companyDid).then((list) => {
       setMembers(list);
-      if (!opDid) setOpDid(list.find(a => roleToOwnerType(a.role) === "operator")?.did || "");
-      if (!macDid) setMacDid(list.find(a => roleToOwnerType(a.role) === "machine")?.did || "");
-      if (!otherDid) setOtherDid(list.find(a => roleToOwnerType(a.role) === "creator")?.did || "");
+      setOpDid(list.find(a => roleToOwnerType(a.role) === "operator")?.did || "");
+      setMacDid(list.find(a => roleToOwnerType(a.role) === "machine")?.did || "");
+      setOtherDid(list.find(a => roleToOwnerType(a.role) === "creator")?.did || "");
     });
-  }, [companyDid]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [companyDid]);
 
   // seed isole da eventi + budget attuale
   React.useEffect(() => {
@@ -153,9 +123,9 @@ export default function CompanyCreditsPage() {
       const ids = Array.from(new Set(evts.map((e: any) => e.islandId || e.data?.islandId).filter(Boolean) as string[]));
       const rows = ids.map((id) => ({ id, budget: getIslandBudget(companyDid, id) }));
       setIslands(rows);
-      if (!islandId) setIslandId(ids[0] || "");
+      setIslandId(ids[0] || "");
     } catch {}
-  }, [companyDid]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [companyDid]);
 
   // refresh bilanci per gli account correnti
   const refreshBalances = React.useCallback(() => {
@@ -169,41 +139,11 @@ export default function CompanyCreditsPage() {
 
   React.useEffect(() => { if (companyAcc) refreshBalances(); }, [refreshBalances]);
 
-  // persist UI state to localStorage + querystring
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    const state = {
-      op: opDid, mac: macDid, othType: otherType, oth: otherDid, isl: islandId,
-      amtOp, amtMac, amtOther, amtIsl, thr: threshold,
-    };
-    try { localStorage.setItem(UI_KEY, JSON.stringify(state)); } catch {}
-    try {
-      const p = new URLSearchParams();
-      if (opDid) p.set("op", opDid);
-      if (macDid) p.set("mac", macDid);
-      if (otherDid) p.set("oth", otherDid);
-      if (otherType) p.set("othType", otherType);
-      if (islandId) p.set("isl", islandId);
-      p.set("amtOp", String(amtOp));
-      p.set("amtMac", String(amtMac));
-      p.set("amtOther", String(amtOther));
-      p.set("amtIsl", String(amtIsl));
-      p.set("thr", String(threshold));
-      const qs = p.toString();
-      const url = `${window.location.pathname}${qs ? `?${qs}` : ""}`;
-      window.history.replaceState(null, "", url);
-    } catch {}
-  }, [opDid, macDid, otherType, otherDid, islandId, amtOp, amtMac, amtOther, amtIsl, threshold]);
-
   // helpers view
   const bal = (accId?: string) => (accId ? balances[accId]?.balance ?? 0 : 0);
   const accStr = (t: AccountOwnerType, did: string) => (did ? accountId(t, did) : "");
-
-  // deep-link helpers
-  const historyUrlForAccount = (acc?: string) =>
-    acc ? `/company/credits/history?account=${encodeURIComponent(acc)}` : "#";
-  const historyUrlForIsland = (id?: string) =>
-    id ? `/company/credits/history?islandId=${encodeURIComponent(id)}` : "#";
+  const historyForAccount = (acc?: string) => (acc ? `/company/credits/history?account=${encodeURIComponent(acc)}` : "#");
+  const historyForIsland  = (isl?: string) => (isl ? `/company/credits/history?islandId=${encodeURIComponent(isl)}` : "#");
 
   // actions
   async function handleThresholdCompany() {
@@ -253,23 +193,44 @@ export default function CompanyCreditsPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Crediti azienda</CardTitle>
-            {companyAcc && (
-              <Button asChild variant="outline" size="sm">
-                <a href={historyUrlForAccount(companyAcc)}>Vedi storico azienda</a>
-              </Button>
-            )}
-          </div>
+          <CardTitle>Crediti azienda</CardTitle>
         </CardHeader>
 
         <CardContent className="space-y-6">
-          {/* Badges riepilogo */}
+          {/* Badges riepilogo + link storico */}
           <div className="flex flex-wrap items-center gap-2">
-            <CreditsBadge actor={{ ownerType: "company", ownerId: companyDid }} showActor={false} />
-            {opAcc && <CreditsBadge actor={{ ownerType: "operator", ownerId: opDid, companyId: companyDid }} showCompany={false} />}
-            {macAcc && <CreditsBadge actor={{ ownerType: "machine", ownerId: macDid, companyId: companyDid }} showCompany={false} />}
-            {othAcc && <CreditsBadge actor={{ ownerType: otherType, ownerId: otherDid, companyId: companyDid }} showCompany={false} />}
+            <div className="flex items-center gap-2">
+              <CreditsBadge actor={{ ownerType: "company", ownerId: companyDid }} showActor={false} />
+              {companyAcc && (
+                <Button asChild size="sm" variant="outline">
+                  <Link to={historyForAccount(companyAcc)}>Vedi storico</Link>
+                </Button>
+              )}
+            </div>
+            {opAcc && (
+              <div className="flex items-center gap-2">
+                <CreditsBadge actor={{ ownerType: "operator", ownerId: opDid, companyId: companyDid }} showCompany={false} />
+                <Button asChild size="sm" variant="outline">
+                  <Link to={historyForAccount(opAcc)}>Vedi storico</Link>
+                </Button>
+              </div>
+            )}
+            {macAcc && (
+              <div className="flex items-center gap-2">
+                <CreditsBadge actor={{ ownerType: "machine", ownerId: macDid, companyId: companyDid }} showCompany={false} />
+                <Button asChild size="sm" variant="outline">
+                  <Link to={historyForAccount(macAcc)}>Vedi storico</Link>
+                </Button>
+              </div>
+            )}
+            {othAcc && (
+              <div className="flex items-center gap-2">
+                <CreditsBadge actor={{ ownerType: otherType, ownerId: otherDid, companyId: companyDid }} showCompany={false} />
+                <Button asChild size="sm" variant="outline">
+                  <Link to={historyForAccount(othAcc)}>Vedi storico</Link>
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Soglia low-balance */}
@@ -279,15 +240,10 @@ export default function CompanyCreditsPage() {
                 <Label>Soglia low-balance</Label>
                 <Input type="number" min={0} value={threshold} onChange={(e) => setThr(Number(e.target.value))} />
               </div>
-              <div className="grid content-end gap-2 sm:grid-cols-2">
+              <div className="grid content-end">
                 <Button variant="outline" onClick={handleThresholdCompany} disabled={!companyAcc || loading}>
                   Imposta soglia
                 </Button>
-                {companyAcc && (
-                  <Button asChild variant="ghost">
-                    <a href={historyUrlForAccount(companyAcc)}>Vedi storico</a>
-                  </Button>
-                )}
               </div>
               <div className="grid content-end text-xs text-muted-foreground">
                 <div>Azienda: <span className="font-mono">{companyBal}</span></div>
@@ -299,14 +255,7 @@ export default function CompanyCreditsPage() {
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Operatore */}
             <div className="rounded-md border p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-medium">Trasferisci a operatore</div>
-                {opAcc && (
-                  <Button asChild variant="ghost" size="sm">
-                    <a href={historyUrlForAccount(opAcc)}>Vedi storico</a>
-                  </Button>
-                )}
-              </div>
+              <div className="text-sm font-medium">Trasferisci a operatore</div>
               <Select value={opDid} onValueChange={(v) => setOpDid(v)}>
                 <SelectTrigger><SelectValue placeholder="Seleziona operatore" /></SelectTrigger>
                 <SelectContent className="z-[60]">
@@ -318,24 +267,22 @@ export default function CompanyCreditsPage() {
               <div className="text-xs text-muted-foreground font-mono">
                 {opAcc || "—"} {opAcc ? `• saldo ${bal(opAcc)}` : ""}
               </div>
-              <div className="grid grid-cols-[1fr_auto] gap-2">
+              <div className="grid grid-cols-[1fr_auto_auto] gap-2">
                 <Input type="number" min={1} value={amtOp} onChange={(e) => setAmtOp(Number(e.target.value))} aria-label="Importo operatore" />
                 <Button onClick={() => doTransfer("operator", opDid, amtOp, "company_to_operator")} disabled={!opDid || amtOp <= 0 || loading}>
                   Trasferisci
                 </Button>
+                {opAcc && (
+                  <Button asChild variant="outline">
+                    <Link to={historyForAccount(opAcc)}>Vedi storico</Link>
+                  </Button>
+                )}
               </div>
             </div>
 
             {/* Macchina */}
             <div className="rounded-md border p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-medium">Trasferisci a macchina</div>
-                {macAcc && (
-                  <Button asChild variant="ghost" size="sm">
-                    <a href={historyUrlForAccount(macAcc)}>Vedi storico</a>
-                  </Button>
-                )}
-              </div>
+              <div className="text-sm font-medium">Trasferisci a macchina</div>
               <Select value={macDid} onValueChange={(v) => setMacDid(v)}>
                 <SelectTrigger><SelectValue placeholder="Seleziona macchina" /></SelectTrigger>
                 <SelectContent className="z-[60]">
@@ -347,24 +294,22 @@ export default function CompanyCreditsPage() {
               <div className="text-xs text-muted-foreground font-mono">
                 {macAcc || "—"} {macAcc ? `• saldo ${bal(macAcc)}` : ""}
               </div>
-              <div className="grid grid-cols-[1fr_auto] gap-2">
+              <div className="grid grid-cols-[1fr_auto_auto] gap-2">
                 <Input type="number" min={1} value={amtMac} onChange={(e) => setAmtMac(Number(e.target.value))} aria-label="Importo macchina" />
                 <Button onClick={() => doTransfer("machine", macDid, amtMac, "company_to_machine")} disabled={!macDid || amtMac <= 0 || loading}>
                   Trasferisci
                 </Button>
+                {macAcc && (
+                  <Button asChild variant="outline">
+                    <Link to={historyForAccount(macAcc)}>Vedi storico</Link>
+                  </Button>
+                )}
               </div>
             </div>
 
             {/* Altro */}
             <div className="rounded-md border p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-medium">Altro (creator/admin o DID manuale)</div>
-                {othAcc && (
-                  <Button asChild variant="ghost" size="sm">
-                    <a href={historyUrlForAccount(othAcc)}>Vedi storico</a>
-                  </Button>
-                )}
-              </div>
+              <div className="text-sm font-medium">Altro (creator/admin o DID manuale)</div>
               <div className="grid sm:grid-cols-3 gap-2">
                 <Select value={otherType} onValueChange={(v: AccountOwnerType) => setOtherType(v)}>
                   <SelectTrigger><SelectValue placeholder="Tipo" /></SelectTrigger>
@@ -391,24 +336,22 @@ export default function CompanyCreditsPage() {
               <div className="text-xs text-muted-foreground font-mono">
                 {othAcc || "—"} {othAcc ? `• saldo ${bal(othAcc)}` : ""}
               </div>
-              <div className="grid grid-cols-[1fr_auto] gap-2">
+              <div className="grid grid-cols-[1fr_auto_auto] gap-2">
                 <Input type="number" min={1} value={amtOther} onChange={(e) => setAmtOther(Number(e.target.value))} aria-label="Importo altro" />
                 <Button onClick={() => doTransfer(otherType, otherDid, amtOther, "company_to_member")} disabled={!otherDid || amtOther <= 0 || loading}>
                   Trasferisci
                 </Button>
+                {othAcc && (
+                  <Button asChild variant="outline">
+                    <Link to={historyForAccount(othAcc)}>Vedi storico</Link>
+                  </Button>
+                )}
               </div>
             </div>
 
             {/* Bucket isola */}
             <div className="rounded-md border p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-medium">Bucket isola — ricarica veloce</div>
-                {islandId && (
-                  <Button asChild variant="ghost" size="sm">
-                    <a href={historyUrlForIsland(islandId)}>Vedi storico</a>
-                  </Button>
-                )}
-              </div>
+              <div className="text-sm font-medium">Bucket isola — ricarica veloce</div>
               <Select value={islandId} onValueChange={setIslandId}>
                 <SelectTrigger><SelectValue placeholder="Seleziona isola" /></SelectTrigger>
                 <SelectContent>
@@ -420,11 +363,16 @@ export default function CompanyCreditsPage() {
               <div className="text-xs text-muted-foreground">
                 Budget attuale: <span className="font-mono">{islandId ? getIslandBudget(companyDid, islandId) : 0}</span>
               </div>
-              <div className="grid grid-cols-[1fr_auto] gap-2">
+              <div className="grid grid-cols-[1fr_auto_auto] gap-2">
                 <Input type="number" min={1} value={amtIsl} onChange={(e) => setAmtIsl(Number(e.target.value))} aria-label="Importo isola" />
                 <Button onClick={topupIsland} disabled={!islandId || amtIsl <= 0 || loading}>
                   Ricarica bucket
                 </Button>
+                {islandId && (
+                  <Button asChild variant="outline">
+                    <Link to={historyForIsland(islandId)}>Vedi storico</Link>
+                  </Button>
+                )}
               </div>
             </div>
           </div>
