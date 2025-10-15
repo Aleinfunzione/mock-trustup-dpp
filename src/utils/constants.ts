@@ -31,6 +31,8 @@ export const STORAGE_KEYS = {
   // Snapshot VP/DPP pubblicati
   vpSnapshots: "trustup:vp:snapshots",
 } as const;
+export type StorageKeys = typeof STORAGE_KEYS;
+export type StorageKey = StorageKeys[keyof StorageKeys];
 
 /**
  * Routes principali. Mantiene i path già utilizzati.
@@ -127,6 +129,11 @@ export const EVENT_TYPES = [
   "product.updated",
   "bom.updated",
   "dpp.published",
+  // pillole (catalogo attributi)
+  "product.pill.added",
+  "product.pill.updated",
+  "product.pill.removed",
+  // generici
   "transfer",
   "inspection",
   "recycle",
@@ -143,8 +150,9 @@ export function isEventType(x: unknown): x is EventTypeFromConst {
 
 /**
  * Stati evento utilizzati dalla UI (badge, azioni) e dai services.
+ * Allineati a src/types/event.ts
  */
-export const EVENT_STATUSES = ["open", "in_progress", "done"] as const;
+export const EVENT_STATUSES = ["queued", "in_progress", "done"] as const;
 export type EventStatus = (typeof EVENT_STATUSES)[number];
 
 /* ------------------------------------------------------------------ */
@@ -175,6 +183,9 @@ export const EVENT_LABELS: Record<EventTypeFromConst, string> = {
   "product.updated": "Prodotto aggiornato",
   "bom.updated": "BOM aggiornata",
   "dpp.published": "DPP/VC pubblicata",
+  "product.pill.added": "Pillola aggiunta",
+  "product.pill.updated": "Pillola aggiornata",
+  "product.pill.removed": "Pillola rimossa",
   transfer: "Trasferimento",
   inspection: "Ispezione",
   recycle: "Riciclo",

@@ -563,13 +563,16 @@ function __consumeCore(
     return { ok: false, reason: "INSUFFICIENT_FUNDS", detail: { payerAccountId, cost, balance: payer.balance } };
   }
 
-  // Island bucket charge se richiesto
+  // Island bucket charge: se payer è company e bucket capiente, scala comunque
   let islandBucketCharged = false;
-  if (ref?.islandId && res.willChargeIslandBucket) {
+  if (ref?.islandId) {
     const { ownerType, ownerId } = splitAccountId(payerAccountId);
     if (ownerType === "company" && ownerId) {
-      addToIslandBudget(ownerId, ref.islandId, -cost);
-      islandBucketCharged = true;
+      const bucketBal = getIslandBudget(ownerId, ref.islandId);
+      if (bucketBal >= cost) {
+        addToIslandBudget(ownerId, ref.islandId, -cost);
+        islandBucketCharged = true;
+      }
     }
   }
 
@@ -671,12 +674,16 @@ export function spend(
     return { ok: false, reason: "INSUFFICIENT_FUNDS", detail: { payerAccountId, cost, balance: payer.balance } };
   }
 
+  // Island bucket charge: se payer è company e bucket capiente, scala comunque
   let islandBucketCharged = false;
-  if (ref?.islandId && res.willChargeIslandBucket) {
+  if (ref?.islandId) {
     const { ownerType, ownerId } = splitAccountId(payerAccountId);
     if (ownerType === "company" && ownerId) {
-      addToIslandBudget(ownerId, ref.islandId, -cost);
-      islandBucketCharged = true;
+      const bucketBal = getIslandBudget(ownerId, ref.islandId);
+      if (bucketBal >= cost) {
+        addToIslandBudget(ownerId, ref.islandId, -cost);
+        islandBucketCharged = true;
+      }
     }
   }
 

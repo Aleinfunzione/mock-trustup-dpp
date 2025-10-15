@@ -37,6 +37,8 @@ export type InitSeed = {
 export const CREDIT_ERRORS = {
   INSUFFICIENT_FUNDS: "INSUFFICIENT_FUNDS",
   NO_PAYER: "NO_PAYER",
+  POLICY_DENY: "POLICY_DENY",
+  CHAIN_BLOCKED: "CHAIN_BLOCKED",
   RACE_CONDITION: "RACE_CONDITION",
 } as const;
 
@@ -48,6 +50,9 @@ type ConsumeRef = {
   islandId?: string;
   actorDid?: string;
 } & Record<string, any>;
+
+type OkBase = { ok: true; tx: CreditTx; payerAccountId: string; cost?: number; bucketId?: string };
+type ErrBase = { ok: false; reason: (typeof CREDIT_ERRORS)[keyof typeof CREDIT_ERRORS]; detail?: any };
 
 /* ---------------------------------------------------------------------------------- */
 /* Boot / setup                                                                       */
@@ -159,13 +164,24 @@ export function simulateCost(
 function isErr(res: _ConsumeResult): res is Extract<_ConsumeResult, { ok: false }> {
   return res.ok === false;
 }
+
 function normalizeReason(
   reason?: string,
   detail?: any
 ): (typeof CREDIT_ERRORS)[keyof typeof CREDIT_ERRORS] {
-  if (reason === CREDIT_ERRORS.INSUFFICIENT_FUNDS || reason === CREDIT_ERRORS.NO_PAYER) return reason;
+  if (
+    reason === CREDIT_ERRORS.INSUFFICIENT_FUNDS ||
+    reason === CREDIT_ERRORS.NO_PAYER ||
+    reason === CREDIT_ERRORS.POLICY_DENY ||
+    reason === CREDIT_ERRORS.CHAIN_BLOCKED ||
+    reason === CREDIT_ERRORS.RACE_CONDITION
+  ) {
+    return reason;
+  }
   const d = typeof detail === "string" ? detail : JSON.stringify(detail || {});
-  if (d.includes("Race condition")) return CREDIT_ERRORS.RACE_CONDITION;
+  if (d.match(/race/i)) return CREDIT_ERRORS.RACE_CONDITION;
+  if (d.match(/policy/i)) return CREDIT_ERRORS.POLICY_DENY;
+  if (d.match(/blocked|chain/i)) return CREDIT_ERRORS.CHAIN_BLOCKED;
   return CREDIT_ERRORS.NO_PAYER;
 }
 
@@ -174,12 +190,16 @@ export function consumeForAction(
   actor: ConsumeActor,
   ref?: ConsumeRef,
   qty = 1
-):
-  | { ok: true; tx: CreditTx; payerAccountId: string }
-  | { ok: false; reason: (typeof CREDIT_ERRORS)[keyof typeof CREDIT_ERRORS]; detail?: any } {
+): OkBase | ErrBase {
   const res = storeConsume(action, actor, ref, qty);
   if (isErr(res)) return { ok: false, reason: normalizeReason(String(res.reason), res.detail), detail: res.detail };
-  return { ok: true, tx: res.tx, payerAccountId: res.payerAccountId! };
+  return {
+    ok: true,
+    tx: res.tx,
+    payerAccountId: res.payerAccountId!,
+    cost: (res as any).cost,
+    bucketId: (res as any).bucketId,
+  };
 }
 
 export function spend(
@@ -188,12 +208,16 @@ export function spend(
   ref?: ConsumeRef,
   qty = 1,
   dedup_key?: string
-):
-  | { ok: true; tx: CreditTx; payerAccountId: string }
-  | { ok: false; reason: (typeof CREDIT_ERRORS)[keyof typeof CREDIT_ERRORS]; detail?: any } {
+): OkBase | ErrBase {
   const res = storeSpend(action, actor, ref, qty, dedup_key);
   if (isErr(res)) return { ok: false, reason: normalizeReason(String(res.reason), res.detail), detail: res.detail };
-  return { ok: true, tx: res.tx, payerAccountId: res.payerAccountId! };
+  return {
+    ok: true,
+    tx: res.tx,
+    payerAccountId: res.payerAccountId!,
+    cost: (res as any).cost,
+    bucketId: (res as any).bucketId,
+  };
 }
 
 /* ---------------------------------------------------------------------------------- */

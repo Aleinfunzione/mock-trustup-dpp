@@ -72,7 +72,7 @@ export function createEvent(
 ): ProductEvent {
   const i: any = input;
 
-  // usa l'id fornito se presente per allineare dedup e riferimenti
+  // usa l’id fornito se presente per allineare dedup e riferimenti
   const id = (i?.id as string) || `evt_${randomHex(10)}`;
   const now = nowISO();
   const status: EventStatus = coalesceStatus(i.status ?? i.data?.status ?? "done");
@@ -123,7 +123,7 @@ export function createEvent(
       companyId: evt.companyDid,
     };
 
-    const dedup = `${action}:${evt.id}`;
+    const dedup = (i.dedupKey as string) || `${action}:${evt.id}`;
     const res: any =
       typeof (creditStore as any)?.spend === "function"
         ? (creditStore as any).spend(action, actor, ref, 1, dedup)
@@ -131,11 +131,12 @@ export function createEvent(
 
     if (res && res.ok) {
       const cost = Number(res.cost);
+      const amount = Number.isFinite(cost) ? cost : undefined;
       const bucketId = res.bucketId as string | undefined;
       const txId = (res.tx && (res.tx.id || res.tx.txId)) as string | undefined;
       const payerType = (res.tx as any)?.meta?.payerType as string | undefined;
 
-      (evt as any).cost = Number.isFinite(cost) ? cost : undefined;
+      // meta applicativa
       (evt as any).meta = {
         ...(evt as any).meta,
         islandBucketCharged: bucketId,
@@ -143,14 +144,13 @@ export function createEvent(
         txId,
       };
 
+      // billing tipizzato: amount + txId
       evt.data = {
         ...(evt.data ?? {}),
         billing: {
           ...(evt.data?.billing ?? {}),
-          cost: (evt as any).cost,
-          islandBucketCharged: bucketId,
-          payerType,
-          txId,
+          ...(amount != null ? { amount } : {}),
+          ...(txId ? { txId } : {}),
         },
         txRef: evt.data?.txRef ?? txId,
       };
@@ -189,8 +189,8 @@ export function listEventsByProduct(
   });
 
   return out.sort((a, b) => {
-    const ta = (a.createdAt || a.timestamp || "");
-    const tb = (b.createdAt || b.timestamp || "");
+    const ta = eTime(a);
+    const tb = eTime(b);
     return ta.localeCompare(tb);
   });
 }
@@ -198,6 +198,10 @@ export function listEventsByProduct(
 function listAllEvents(): ProductEvent[] {
   const map = getEventsMap();
   return Object.values(map);
+}
+
+function eTime(e: ProductEvent): string {
+  return e.createdAt || e.timestamp || "";
 }
 
 export function listEvents(
@@ -209,7 +213,7 @@ export function listEvents(
     if (filters.productId && e.productId !== filters.productId) return false;
     if (filters.type && e.type !== filters.type) return false;
 
-    const created = e.createdAt || e.timestamp || "";
+    const created = eTime(e);
     if (!inRange(created, filters.from, filters.to)) return false;
 
     if (filters.islandId) {
@@ -223,11 +227,7 @@ export function listEvents(
     return true;
   });
 
-  return out.sort((a, b) => {
-    const ta = (a.createdAt || a.timestamp || "");
-    const tb = (b.createdAt || b.timestamp || "");
-    return ta.localeCompare(tb);
-  });
+  return out.sort((a, b) => eTime(a).localeCompare(eTime(b)));
 }
 
 export function listEventsByCompany(companyDid: string, type?: EventType): ProductEvent[] {

@@ -2,16 +2,20 @@
 
 export type EventId = string;
 
+/* =========================
+ * Tipi evento
+ * ========================= */
+
 export type EventType =
   | "product.created"
   | "product.updated"
   | "bom.updated"
   | "dpp.published"
-  // eventi dedicati alle pillole (catalogo attributi)
+  // pillole (catalogo attributi)
   | "product.pill.added"
   | "product.pill.updated"
   | "product.pill.removed"
-  // eventi applicativi generici già previsti
+  // generici
   | "transfer"
   | "inspection"
   | "recycle"
@@ -23,7 +27,10 @@ export type EventStatus = "queued" | "in_progress" | "done";
 /** Ambito dell’evento rispetto al prodotto */
 export type EventScope = "product" | "bom";
 
-/** Metadati target usati in BOM e isole */
+/* =========================
+ * Metadati target e billing
+ * ========================= */
+
 export interface EventTargetMeta {
   scope?: EventScope;
   /** id del nodo BOM se scope="bom" */
@@ -36,7 +43,27 @@ export interface EventTargetMeta {
   islandId?: string;
 }
 
-/** Evento applicativo legato a un prodotto (MOCK) */
+export interface EventBilling {
+  txId?: string;            // id transazione crediti
+  payerAccountId?: string;  // account addebitato
+  amount?: number;          // costo applicato
+  policy?: string;          // nome/preset policy usata
+  chargeKind?: string;      // "consume" | azione specifica
+}
+
+/** Payload evento standardizzato + estendibile */
+export type EventData = EventTargetMeta & {
+  status?: EventStatus;     // alias usato da alcuni componenti UI
+  notes?: string;
+  billing?: EventBilling;   // popolato dal service su create (idempotente)
+  updatedAt?: string;       // ISO
+  [k: string]: any;
+};
+
+/* =========================
+ * Entity principale
+ * ========================= */
+
 export interface ProductEvent {
   id: EventId;
   /** consente anche tipi custom non elencati */
@@ -55,7 +82,7 @@ export interface ProductEvent {
   timestamp: string;
   createdAt?: string;
 
-  /** stato visuale opzionale per timeline */
+  /** stato visuale opzionale per timeline (alias di data.status) */
   status?: EventStatus;
 
   /** se l’evento è riferito a una specifica isola */
@@ -69,40 +96,59 @@ export interface ProductEvent {
   executedAt?: string;
 
   /** payload libero + metadati target standardizzati */
-  data?: Record<string, any> & EventTargetMeta;
+  data?: EventData;
 
   /** relazioni opzionali verso altri DID/prodotti/eventi */
   related?: {
     products?: string[];
     actors?: string[];
     events?: string[];
-    /** opzionali extra utili in futuro (non rompono nulla) */
+    /** opzionali extra utili in futuro */
     docs?: string[];
     uri?: string;
   };
 }
 
-/** Input standard per creazione evento dal service */
+/* =========================
+ * Input/filtri servizio
+ * ========================= */
+
 export interface EventCreateInput {
   productId: string;
   companyDid: string;
   actorDid: string;
   type: EventType | string;
+
   /** testo libero opzionale */
   notes?: string;
+
   /** destinatario membro/macchina */
   assignedToDid?: string;
+
   /** metadati target + payload */
-  data?: Record<string, any> & EventTargetMeta;
-  /** stato iniziale */
+  data?: EventData;
+
+  /** stato iniziale (alias di data.status se presente) */
   status?: EventStatus;
+
   /** isola riferita */
   islandId?: string;
+
   /** override del timestamp */
   timestamp?: string;
+
+  /** idempotenza lato billing/store */
+  dedupKey?: string;
 }
 
-/** Filtri base per interrogazioni */
+export interface EventUpdateInput {
+  id: EventId;
+  status?: EventStatus;
+  notes?: string;
+  assignedToDid?: string;
+  data?: Partial<EventData>;
+}
+
 export interface EventListFilters {
   productId?: string;
   islandId?: string;

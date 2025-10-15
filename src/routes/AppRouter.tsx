@@ -24,7 +24,7 @@ import CreditsHistoryPage from "@/pages/company/CreditsHistoryPage";
 
 // Admin
 import AdminCreditsPage from "@/pages/admin/AdminCreditsPage";
-import AdminCreditsHistoryPage from "@/pages/admin/CreditsHistoryPage"; // NEW
+import AdminCreditsHistoryPage from "@/pages/admin/CreditsHistoryPage";
 
 // Creator
 import CreatorEventsKPI from "@/pages/creator/events";
@@ -32,7 +32,7 @@ import CreatorEventsTimeline from "@/pages/creator/events/timeline";
 import CreatorEventCreatePage from "@/pages/creator/events/create";
 import CreatorProductsPage from "@/pages/products/CreatorProductsPage";
 import CreatorAttributesCatalogPage from "@/pages/creator/CreatorAttributesCatalogPage";
-import CreatorCreditsHistoryPage from "@/pages/creator/CreditsHistoryPage"; // NEW
+import CreatorCreditsHistoryPage from "@/pages/creator/CreditsHistoryPage";
 
 // Prodotti
 import ProductsPage from "@/pages/products/ProductsPage";
@@ -43,6 +43,9 @@ import DPPViewerPage from "@/components/credentials/DPPViewerPage";
 
 // Viewer VP
 import VPViewerPage from "@/pages/viewer/VPViewerPage";
+
+// Dev QA
+import DevQaPage from "@/pages/dev/DevQaPage";
 
 export default function AppRouter() {
   return (
@@ -73,9 +76,18 @@ export default function AppRouter() {
           <Route
             path="/admin/credits/history"
             element={
-                <RequireRole role="admin">
-                  <AdminCreditsHistoryPage />
-                </RequireRole>
+              <RequireRole role="admin">
+                <AdminCreditsHistoryPage />
+              </RequireRole>
+            }
+          />
+          {/* Dev tools (solo admin) */}
+          <Route
+            path="/dev"
+            element={
+              <RequireRole role="admin">
+                <DevQaPage />
+              </RequireRole>
             }
           />
 

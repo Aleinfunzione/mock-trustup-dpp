@@ -283,7 +283,8 @@ export default function EventForm({
       ? [...EVENT_TYPES, "Altro"]
       : ["Produzione", "Ispezione", "Spedizione", "Riciclo", "Altro"];
 
-  const effectiveType = eventType === "Altro" ? customType.trim() : eventType.trim();
+  const customTypeRequired = eventType === "Altro";
+  const effectiveType = customTypeRequired ? customType.trim() : eventType.trim();
 
   const targetValid =
     !!assignedToDid ||
@@ -348,11 +349,11 @@ export default function EventForm({
     if (spendRes.ok === false) {
       const errRes = spendRes as Extract<ConsumeResult, { ok: false }>;
       const msg =
-       errRes.reason === "INSUFFICIENT_FUNDS"
-        ? "Crediti insufficienti"
-        : errRes.reason === "NO_PAYER"
-        ? "Nessuno sponsor disponibile"
-        : "Conflitto di salvataggio";
+        errRes.reason === "INSUFFICIENT_FUNDS"
+          ? "Crediti insufficienti"
+          : errRes.reason === "NO_PAYER"
+          ? "Nessuno sponsor disponibile"
+          : "Conflitto di salvataggio";
       throw Object.assign(new Error(msg), { code: errRes.reason, detail: errRes.detail });
     }
     const txRef: string | undefined = (spendRes as any).tx?.id;
@@ -419,8 +420,12 @@ export default function EventForm({
       toast({ title: "Seleziona un prodotto", variant: "destructive" });
       return;
     }
-    if (!effectiveType) {
-      toast({ title: "Seleziona o inserisci un tipo evento", variant: "destructive" });
+    if (!eventType) {
+      toast({ title: "Seleziona un tipo evento", variant: "destructive" });
+      return;
+    }
+    if (customTypeRequired && !customType.trim()) {
+      toast({ title: "Specifica il tipo personalizzato", variant: "destructive" });
       return;
     }
     if (scope === "bom" && !targetNodeId) {
@@ -492,7 +497,7 @@ export default function EventForm({
         </CardHeader>
       )}
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" aria-busy={submitting}>
           {/* Prodotto */}
           <div className="space-y-2">
             <Label htmlFor="product">Prodotto</Label>
@@ -522,7 +527,13 @@ export default function EventForm({
           {/* Tipo */}
           <div className="space-y-2">
             <Label htmlFor="type">Tipo</Label>
-            <Select value={eventType} onValueChange={setEventType}>
+            <Select
+              value={eventType}
+              onValueChange={(v: string) => {
+                setEventType(v);
+                if (v !== "Altro" && customType) setCustomType("");
+              }}
+            >
               <SelectTrigger id="type" aria-label="Seleziona tipo evento">
                 <SelectValue placeholder="Seleziona un tipo" />
               </SelectTrigger>
@@ -545,6 +556,7 @@ export default function EventForm({
                 placeholder="Es. Manutenzione, Telemetria, …"
                 value={customType}
                 onChange={(e) => setCustomType(e.target.value)}
+                required
               />
             </div>
           )}
@@ -610,7 +622,15 @@ export default function EventForm({
             <>
               <div className="space-y-2">
                 <Label htmlFor="targetKind">Destinatario</Label>
-                <Select value={targetKind} onValueChange={(v: TargetKind) => { setTargetKind(v); }}>
+                <Select
+                  value={targetKind}
+                  onValueChange={(v: TargetKind) => {
+                    setTargetKind(v);
+                    // reset campi dell’altro target per evitare submit bloccato
+                    if (v === "member") setIslandId("");
+                    else setAssignee("");
+                  }}
+                >
                   <SelectTrigger id="targetKind" aria-label="Seleziona destinatario">
                     <SelectValue placeholder="Seleziona destinatario" />
                   </SelectTrigger>
@@ -698,11 +718,11 @@ export default function EventForm({
             </div>
             <div className="flex gap-2 w-full sm:w-auto">
               {!canPay && (
-                <Button type="button" variant="outline" onClick={handleRetry} disabled={retrying}>
+                <Button type="button" variant="outline" onClick={handleRetry} disabled={retrying} aria-disabled={retrying}>
                   {retrying ? "Verifica credito…" : "Riprova pagamento"}
                 </Button>
               )}
-              <Button type="submit" className="w-full sm:w-auto" disabled={!canSubmit || submitting}>
+              <Button type="submit" className="w-full sm:w-auto" disabled={!canSubmit || submitting} aria-disabled={!canSubmit || submitting}>
                 {submitting ? "Salvataggio…" : "Registra evento"}
               </Button>
             </div>
