@@ -14,6 +14,11 @@ import {
   topup,
   transfer,
   listAccounts as storeListAccounts,
+  setLowBalanceThreshold,
+  // bucket isole
+  getIslandBudget,
+  setIslandBudget,
+  addToIslandBudget,
 } from "@/stores/creditStore";
 import type {
   AccountOwnerType,
@@ -101,6 +106,7 @@ export function getBalances(accountIds: string[]) {
 export function getAccountBalance(accountId: string) {
   return storeGetBalance(accountId);
 }
+export const getBalance = getAccountBalance; // alias compat
 
 export function accountId(ownerType: AccountOwnerType, ownerId: string) {
   return getAccountId(ownerType, ownerId);
@@ -237,9 +243,6 @@ export function topupAccount(toAccountId: string, amount: number, meta?: any) {
 }
 
 export function setThreshold(accountId: string, threshold: number) {
-  // delega al layer store
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { setLowBalanceThreshold } = require("@/stores/creditStore");
   setLowBalanceThreshold(accountId, threshold);
 }
 
@@ -255,7 +258,6 @@ export function listTransactions(params?: { accountId?: string; limit?: number }
 /* Accounts helpers                                                                    */
 /* ---------------------------------------------------------------------------------- */
 
-/** Crea (se mancante) l’account del membro: creator/operator/machine/admin. */
 export function ensureMemberAccount(
   ownerType: AccountOwnerType,
   ownerId: string,
@@ -264,3 +266,9 @@ export function ensureMemberAccount(
 ) {
   return storeEnsureMemberAccount(ownerType, ownerId, initialBalance, threshold);
 }
+
+/* ---------------------------------------------------------------------------------- */
+/* Re-export utili per CompanyCreditsPage                                             */
+/* ---------------------------------------------------------------------------------- */
+
+export { ensureCompanyAccount, getIslandBudget, setIslandBudget, addToIslandBudget };

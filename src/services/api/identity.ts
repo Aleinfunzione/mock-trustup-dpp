@@ -29,6 +29,9 @@ export type PublicMember = {
   email?: string;
   companyDid?: string;
   username?: string;
+  /** mapping isola/gruppo per filtri UI */
+  islandId?: string;
+  group?: string;
 };
 
 /* ---------- storage keys locali per isole/mapping (no nuovi file) ---------- */
@@ -73,14 +76,14 @@ function splitName(username?: string): { firstName?: string; lastName?: string }
   return { firstName: username };
 }
 
-/** Costruisce il profilo pubblico richiesto dalla UI */
+/** Costruisce il profilo pubblico richiesto dalla UI (merge con mapping isola) */
 function toPublicMember(r: IdentityRecord): PublicMember {
   const displayName = toDisplayName(r);
   const { firstName, lastName } = splitName(r.username);
-  // email mock se non presente: username@mock.local
   const email =
     (r as any).email ??
     (r.username ? `${r.username.replace(/\s+/g, ".").toLowerCase()}@mock.local` : undefined);
+  const map = getMemberIsland(r.did);
   return {
     did: r.did,
     role: r.role,
@@ -90,7 +93,19 @@ function toPublicMember(r: IdentityRecord): PublicMember {
     email,
     companyDid: r.companyDid,
     username: r.username,
+    islandId: map?.islandId,
+    group: map?.group,
   };
+}
+
+function sortByRoleName<T extends { role: Role; displayName?: string; username?: string }>(arr: T[]): T[] {
+  return [...arr].sort((a, b) => {
+    const rr = String(a.role).localeCompare(String(b.role));
+    if (rr !== 0) return rr;
+    const an = (a as any).displayName ?? a.username ?? "";
+    const bn = (b as any).displayName ?? b.username ?? "";
+    return String(an).localeCompare(String(bn));
+  });
 }
 
 /* ---------- load/save (NORMALIZZATO) ---------- */
@@ -305,6 +320,12 @@ export function getActor(did: string): IdentityRecord | undefined {
   return reg.actors[did];
 }
 
+/** Profilo pubblico di un attore */
+export function getPublicMember(did: string): PublicMember | undefined {
+  const a = getActor(did);
+  return a ? toPublicMember(a) : undefined;
+}
+
 export function upsertActor(record: IdentityRecord): IdentityRecord {
   const reg = getRegistry();
   reg.actors[record.did] = { ...reg.actors[record.did], ...record };
@@ -399,7 +420,8 @@ export function ensureAdmin(username = "admin"): IdentityRecord {
 
 /** Profili membri di un’azienda con shape public richiesto */
 export function listMembersByCompany(companyDid: string): PublicMember[] {
-  return listCompanyMembers(companyDid).map(toPublicMember);
+  const members = listCompanyMembers(companyDid).map(toPublicMember);
+  return sortByRoleName(members);
 }
 
 /** Alias comodo */
@@ -410,7 +432,7 @@ export function listMembers(companyDid?: string): PublicMember[] {
   const reg = getRegistry();
   const all = Object.values(reg.actors).filter((a) => a.role !== "company");
   const filtered = companyDid ? all.filter((a) => a.companyDid === companyDid) : all;
-  return filtered.map(toPublicMember);
+  return sortByRoleName(filtered.map(toPublicMember));
 }
 
 /** Alias generico chiesto dalla UI */

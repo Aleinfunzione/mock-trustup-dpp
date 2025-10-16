@@ -8,7 +8,9 @@ import type {
   EventCreateInput,
   EventStatus,
 } from "@/types/event";
+import type { ConsumeActor } from "@/types/credit";
 import * as creditStore from "@/stores/creditStore";
+import { getActor } from "@/services/api/identity";
 
 /* ---------------- utils ---------------- */
 
@@ -63,6 +65,21 @@ function mapEventToCreditAction(t: string): string {
   }
 }
 
+function eTime(e: ProductEvent): string {
+  return e.createdAt || e.timestamp || "";
+}
+
+function listAllEvents(): ProductEvent[] {
+  const map = getEventsMap();
+  return Object.values(map);
+}
+
+function resolveConsumeActor(actorDid: string, companyDid: string): ConsumeActor {
+  const rec = getActor(actorDid);
+  const ownerType = (rec?.role ?? "creator") as ConsumeActor["ownerType"];
+  return { ownerType, ownerId: actorDid, companyId: companyDid };
+}
+
 /* ---------------- API principali ---------------- */
 
 export function createEvent(
@@ -72,9 +89,8 @@ export function createEvent(
 ): ProductEvent {
   const i: any = input;
 
-  // usa l’id fornito se presente per allineare dedup e riferimenti
   const id = (i?.id as string) || `evt_${randomHex(10)}`;
-  const now = nowISO();
+  const now = i.timestamp ?? nowISO();
   const status: EventStatus = coalesceStatus(i.status ?? i.data?.status ?? "done");
 
   const evt: ProductEvent = {
@@ -97,15 +113,16 @@ export function createEvent(
       status,
       assignedToDid: i.assignedToDid ?? i.data?.assignedToDid,
       islandId: i.islandId ?? i.data?.islandId,
-      txRef: i.data?.txRef, // solo riferimento, nessun addebito qui
+      txRef: i.data?.txRef,
+      updatedAt: now,
     },
     related: i.related,
   };
 
-  // Billing idempotente con spend + dedup sulla coppia (action, eventId)
+  // Billing idempotente con spend e dedup
   try {
     const action = mapEventToCreditAction(evt.type as string);
-    const islandForBilling = evt.islandId ?? evt.data?.islandId ?? null;
+    const islandForBilling = evt.islandId ?? evt.data?.islandId ?? undefined;
 
     const ref: any = {
       type: "event",
@@ -114,16 +131,13 @@ export function createEvent(
       eventType: evt.type,
       status: evt.status,
       assignedToDid: evt.assignedToDid || evt.data?.assignedToDid,
-      islandId: islandForBilling || undefined,
+      actorDid: evt.actorDid,
+      islandId: islandForBilling,
     };
 
-    const actor: any = {
-      ownerType: "company",
-      ownerId: evt.companyDid,
-      companyId: evt.companyDid,
-    };
-
+    const actor = resolveConsumeActor(evt.actorDid, evt.companyDid);
     const dedup = (i.dedupKey as string) || `${action}:${evt.id}`;
+
     const res: any =
       typeof (creditStore as any)?.spend === "function"
         ? (creditStore as any).spend(action, actor, ref, 1, dedup)
@@ -132,31 +146,32 @@ export function createEvent(
     if (res && res.ok) {
       const cost = Number(res.cost);
       const amount = Number.isFinite(cost) ? cost : undefined;
-      const bucketId = res.bucketId as string | undefined;
       const txId = (res.tx && (res.tx.id || res.tx.txId)) as string | undefined;
       const payerType = (res.tx as any)?.meta?.payerType as string | undefined;
+      const islandBucketCharged =
+        (res.tx as any)?.meta?.islandBucketCharged === true || !!res.bucketId;
 
-      // meta applicativa
       (evt as any).meta = {
         ...(evt as any).meta,
-        islandBucketCharged: bucketId,
+        islandBucketCharged,
         payerType,
         txId,
       };
 
-      // billing tipizzato: amount + txId
       evt.data = {
         ...(evt.data ?? {}),
         billing: {
           ...(evt.data?.billing ?? {}),
           ...(amount != null ? { amount } : {}),
           ...(txId ? { txId } : {}),
+          policy: "default",
+          chargeKind: String(res.tx.type),
         },
         txRef: evt.data?.txRef ?? txId,
       };
     }
   } catch {
-    // best-effort: ignora errori di billing
+    // best-effort
   }
 
   const map = getEventsMap();
@@ -178,7 +193,7 @@ export function listEventsByProduct(
 
   const f = filters || {};
   const out = all.filter((e) => {
-    const created = e.createdAt || e.timestamp || "";
+    const created = eTime(e);
     const matchIsland = f.islandId ? e.islandId === f.islandId || e.data?.islandId === f.islandId : true;
     const matchAssignee = f.assignedToDid
       ? e.assignedToDid === f.assignedToDid || e.data?.assignedToDid === f.assignedToDid
@@ -188,20 +203,7 @@ export function listEventsByProduct(
     return matchIsland && matchAssignee && matchType && matchRange;
   });
 
-  return out.sort((a, b) => {
-    const ta = eTime(a);
-    const tb = eTime(b);
-    return ta.localeCompare(tb);
-  });
-}
-
-function listAllEvents(): ProductEvent[] {
-  const map = getEventsMap();
-  return Object.values(map);
-}
-
-function eTime(e: ProductEvent): string {
-  return e.createdAt || e.timestamp || "";
+  return out.sort((a, b) => eTime(a).localeCompare(eTime(b)));
 }
 
 export function listEvents(
@@ -256,6 +258,40 @@ export function updateEventStatus(id: string, newStatus: EventStatus, notes?: st
       updatedAt: nowISO(),
     },
   }));
+}
+
+/** Aggiornamento generico con coerenza islandId/assignedToDid. */
+export function updateEvent(input: {
+  id: string;
+  status?: EventStatus;
+  notes?: string;
+  assignedToDid?: string;
+  data?: Partial<ProductEvent["data"]>;
+}): ProductEvent {
+  return setEvent(input.id, (cur) => {
+    const ts = nowISO();
+    const nextStatus = input.status ?? cur.status;
+    const nextAssigned = input.assignedToDid ?? cur.assignedToDid;
+    const nextIsland = input.data?.islandId ?? cur.islandId ?? cur.data?.islandId;
+
+    const data = {
+      ...cur.data,
+      ...input.data,
+      status: nextStatus ?? cur.data?.status,
+      notes: input.notes ?? cur.data?.notes,
+      assignedToDid: nextAssigned ?? cur.data?.assignedToDid,
+      islandId: nextIsland,
+      updatedAt: ts,
+    };
+
+    return {
+      ...cur,
+      status: nextStatus,
+      assignedToDid: nextAssigned,
+      islandId: nextIsland,
+      data,
+    };
+  });
 }
 
 function setEvent(

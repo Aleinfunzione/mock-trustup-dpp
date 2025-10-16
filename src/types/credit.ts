@@ -31,7 +31,7 @@ export type AnyCreditAction = CreditAction | LegacyCreditAction;
  * ========================= */
 
 export interface CreditAccount {
-  id: string;                    // es. acc:company:<companyId> | acc:island:<companyId>:<islandId>
+  id: string;                    // es. acc:company:<companyId>
   ownerType: AccountOwnerType;
   ownerId: string;               // id logico dell’owner (companyId, userId, ecc.)
   balance: number;               // interi (unità di credito)
@@ -64,6 +64,12 @@ export interface ConsumeActor {
   companyId?: string;
 }
 
+/* =========================
+ * Metadati transazioni
+ * ========================= */
+
+export type PayerType = "company" | "admin" | "member";
+
 /** Metadati strutturati per UI/CSV */
 export type CreditTxMeta = {
   actor?: ConsumeActor;
@@ -77,8 +83,14 @@ export type CreditTxMeta = {
   lowBalance?: boolean;
   lowBalanceFrom?: boolean;
   lowBalanceTo?: boolean;
+
+  /** TRUE se è stato scalato anche il bucket isola dell'azienda. */
   islandBucketCharged?: boolean;
 
+  /** Tipo logico del payer selezionato. */
+  payerType?: PayerType;
+
+  /** Chiave di idempotenza applicata (spend). */
   dedup_key?: string;
 
   [k: string]: any;
@@ -140,6 +152,10 @@ export type ConsumeResultOk = {
   ok: true;
   payerAccountId: string;
   tx: CreditTx;
+  /** Costo totale applicato (qty * unit). */
+  cost: number;
+  /** Se presente indica l'isola su cui è stato scalato il bucket. */
+  bucketId?: string;
 };
 
 export type ConsumeResultErr = {
@@ -155,6 +171,7 @@ export type ConsumeResultErr = {
 
 export type ConsumeResult = ConsumeResultOk | ConsumeResultErr;
 
+/** Risultato simulazione costi — opzionale, usato da UI. */
 export type SimulateCostOk = {
   ok: true;
   action: AnyCreditAction;
@@ -163,6 +180,8 @@ export type SimulateCostOk = {
   payerCandidates: string[]; // accountId[]
   usedPolicy?: SponsorshipRule;
   usedCharge?: ChargePolicyRule;
+  /** Facoltativo: payer che verrebbe scelto dal resolve (se calcolato). */
+  payer?: string;
 };
 
 export type SimulateCostErr = {
@@ -172,3 +191,10 @@ export type SimulateCostErr = {
 };
 
 export type SimulateCostResult = SimulateCostOk | SimulateCostErr;
+
+/* =========================
+ * Soglie low-balance
+ * ========================= */
+
+/** Mappa soglie per accountId (usata dal watcher). */
+export type ThresholdsMap = Partial<Record<string, number>>;

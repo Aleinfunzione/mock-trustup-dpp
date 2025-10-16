@@ -21,6 +21,13 @@ import type {
 } from "@/types/credit";
 import { STORAGE_KEYS } from "@/utils/constants";
 
+/* ============================ Debug ============================ */
+
+const DEBUG_CREDITS = (import.meta as any)?.env?.VITE_DEBUG_CREDITS === "true";
+const dlog = (...a: any[]) => {
+  if (DEBUG_CREDITS) console.log("[credits]", ...a);
+};
+
 /* ============================ Policy (config) ============================ */
 
 const DEFAULT_POLICY: ChargePolicyCfg = {
@@ -48,7 +55,7 @@ const KEYS = {
   ACCOUNTS: (STORAGE_KEYS as any)?.CREDITS_ACCOUNTS ?? "trustup:credits:accounts",
   TX: (STORAGE_KEYS as any)?.CREDITS_TX ?? "trustup:credits:tx",
   META: (STORAGE_KEYS as any)?.CREDITS_META ?? "trustup:credits:meta",
-  ISLAND_BUCKETS: "trustup:credits:islandBuckets",
+  ISLAND_BUCKETS: (STORAGE_KEYS as any)?.CREDITS_ISLAND_BUCKETS ?? "trustup:credits:islandBuckets",
 };
 
 /* ============================ Utils ============================ */
@@ -491,10 +498,14 @@ function resolvePayer(
   const cfg = getChargePolicy();
   const accounts = loadAccounts();
 
+  dlog("resolvePayer.start", { action, cost, actor, ref, cfg });
+
   // priorità attore assegnato
   if (cfg.preferActor && ref?.assignedToDid) {
     const memberAcc = findMemberAccount(ref.assignedToDid);
-    if (memberAcc && (accounts[memberAcc]?.balance ?? 0) >= cost) {
+    const bal = memberAcc ? (accounts[memberAcc]?.balance ?? 0) : 0;
+    if (memberAcc && bal >= cost) {
+      dlog("resolvePayer.member", { chosen: memberAcc, bal });
       return { payerAccountId: memberAcc, willChargeIslandBucket: false };
     }
   }
@@ -504,18 +515,27 @@ function resolvePayer(
     const companyAcc = getAccountId("company", actor.companyId);
     const bal = accounts[companyAcc]?.balance ?? 0;
     const islandBal = getIslandBudget(actor.companyId, ref.islandId);
+    dlog("resolvePayer.islandCheck", { companyAcc, bal, islandBal, needed: cost });
     if (bal >= cost && islandBal >= cost) {
+      dlog("resolvePayer.company+island", { chosen: companyAcc });
       return { payerAccountId: companyAcc, willChargeIslandBucket: true };
     }
   }
 
   // fallback catena sponsor
   const chain = buildChain(action, actor);
-  if (chain.length === 0) return { reason: "NO_PAYER" };
+  if (chain.length === 0) {
+    dlog("resolvePayer.fail", { reason: "NO_PAYER" });
+    return { reason: "NO_PAYER" };
+  }
   for (const accId of chain) {
     const bal = accounts[accId]?.balance ?? 0;
-    if (bal >= cost) return { payerAccountId: accId, willChargeIslandBucket: false };
+    if (bal >= cost) {
+      dlog("resolvePayer.fallback", { chosen: accId, bal });
+      return { payerAccountId: accId, willChargeIslandBucket: false };
+    }
   }
+  dlog("resolvePayer.fail", { reason: "INSUFFICIENT_FUNDS" });
   return { reason: "INSUFFICIENT_FUNDS" };
 }
 
@@ -527,6 +547,7 @@ export function simulate(
 ): { cost: number; payer?: string; reason?: string; willChargeIslandBucket?: boolean } {
   const cost = round6(getActionCost(action, qty));
   const res = resolvePayer(action, actor, cost, ref);
+  dlog("simulate", { action, qty, cost, res });
   return {
     cost,
     payer: res.payerAccountId,
@@ -543,6 +564,8 @@ function __consumeCore(
   ref?: ConsumeRef,
   qty = 1
 ): ConsumeResult {
+  dlog("consume.start", { action, actor, ref, qty });
+
   const unit = PRICE_TABLE[action];
   if (!(typeof unit === "number" && unit > 0)) {
     return { ok: false, reason: "NO_PAYER", detail: `Prezzo non definito per ${action}` };
@@ -555,6 +578,7 @@ function __consumeCore(
   if (!payerAccountId) {
     return { ok: false, reason: res.reason ?? "NO_PAYER", detail: { action, actor, cost } };
   }
+  dlog("consume.payer", { payerAccountId });
 
   const prevMeta = loadMeta();
   const accounts = { ...loadAccounts() };
@@ -568,11 +592,19 @@ function __consumeCore(
   if (ref?.islandId) {
     const { ownerType, ownerId } = splitAccountId(payerAccountId);
     if (ownerType === "company" && ownerId) {
-      const bucketBal = getIslandBudget(ownerId, ref.islandId);
-      if (bucketBal >= cost) {
+      const before = getIslandBudget(ownerId, ref.islandId);
+      if (before >= cost) {
         addToIslandBudget(ownerId, ref.islandId, -cost);
         islandBucketCharged = true;
       }
+      dlog("consume.bucket", {
+        companyId: ownerId,
+        islandId: ref.islandId,
+        before,
+        cost,
+        after: getIslandBudget(ownerId, ref.islandId),
+        charged: islandBucketCharged,
+      });
     }
   }
 
@@ -606,6 +638,7 @@ function __consumeCore(
 
   maybeNotifyLow(nextPayer, ts);
   const result: any = { ok: true, payerAccountId, tx, cost, bucketId: islandBucketCharged ? ref?.islandId : undefined };
+  dlog("consume.done", { meta: tx.meta });
   return result as ConsumeResultOk;
 }
 
@@ -657,6 +690,7 @@ export function spend(
     if (existing) {
       const bucketId =
         (existing as any)?.meta?.islandBucketCharged ? (existing as any)?.meta?.ref?.islandId : undefined;
+      dlog("spend.dedup.hit", { dk, txId: existing.id, bucketId });
       return { ok: true, payerAccountId: (existing as any).fromAccountId, tx: existing, cost, bucketId } as any;
     }
   }
@@ -666,6 +700,7 @@ export function spend(
   if (!payerAccountId) {
     return { ok: false, reason: res.reason ?? "NO_PAYER", detail: { action, actor, cost } };
   }
+  dlog("spend.payer", { payerAccountId });
 
   const prevMeta = loadMeta();
   const accounts = { ...loadAccounts() };
@@ -679,11 +714,19 @@ export function spend(
   if (ref?.islandId) {
     const { ownerType, ownerId } = splitAccountId(payerAccountId);
     if (ownerType === "company" && ownerId) {
-      const bucketBal = getIslandBudget(ownerId, ref.islandId);
-      if (bucketBal >= cost) {
+      const before = getIslandBudget(ownerId, ref.islandId);
+      if (before >= cost) {
         addToIslandBudget(ownerId, ref.islandId, -cost);
         islandBucketCharged = true;
       }
+      dlog("spend.bucket", {
+        companyId: ownerId,
+        islandId: ref.islandId,
+        before,
+        cost,
+        after: getIslandBudget(ownerId, ref.islandId),
+        charged: islandBucketCharged,
+      });
     }
   }
 
@@ -720,6 +763,7 @@ export function spend(
 
   maybeNotifyLow(nextPayer, ts);
   const result: any = { ok: true, payerAccountId, tx, cost, bucketId: islandBucketCharged ? ref?.islandId : undefined };
+  dlog("spend.done", { meta: tx.meta });
   return result as ConsumeResultOk;
 }
 

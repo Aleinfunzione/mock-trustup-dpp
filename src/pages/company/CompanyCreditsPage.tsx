@@ -200,7 +200,7 @@ export default function CompanyCreditsPage() {
           {/* Badges riepilogo + link storico */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2">
-              <CreditsBadge actor={{ ownerType: "company", ownerId: companyDid }} showActor={false} />
+              <CreditsBadge actor={{ ownerType: "company", ownerId: companyDid, companyId: companyDid }} />
               {companyAcc && (
                 <Button asChild size="sm" variant="outline">
                   <Link to={historyForAccount(companyAcc)}>Vedi storico</Link>

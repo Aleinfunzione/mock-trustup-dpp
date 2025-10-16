@@ -53,9 +53,11 @@ export interface EventBilling {
 
 /** Payload evento standardizzato + estendibile */
 export type EventData = EventTargetMeta & {
-  status?: EventStatus;     // alias usato da alcuni componenti UI
+  status?: EventStatus;     // opzionale
   notes?: string;
-  billing?: EventBilling;   // popolato dal service su create (idempotente)
+  billing?: EventBilling;   // opzionale, compilato dal service su create
+  /** mirror opzionale dell’assegnazione per compat con alcune UI */
+  assignedToDid?: string;
   updatedAt?: string;       // ISO
   [k: string]: any;
 };

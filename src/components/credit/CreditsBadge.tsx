@@ -2,108 +2,85 @@
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { CreditCard, AlertTriangle } from "lucide-react";
-import { accountId, getBalances } from "@/services/api/credits";
+import { getAccountId, getBalancesByIds } from "@/stores/creditStore";
 import type { AccountOwnerType } from "@/types/credit";
-
-// cn fallback
-let cn: (...c: Array<string | false | undefined>) => string;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const utils = require("@/lib/utils");
-  cn = utils.cn ?? ((...c: any[]) => c.filter(Boolean).join(" "));
-} catch {
-  cn = (...c: Array<string | false | undefined>) => c.filter(Boolean).join(" ");
-}
+import clsx from "clsx";
 
 type ActorRef = {
   ownerType: AccountOwnerType;
   ownerId: string;
-  companyId?: string;
+  companyId: string;
 };
 
 type CreditsBadgeProps = {
-  actor?: ActorRef;
-  showCompany?: boolean; // default true
-  showActor?: boolean;   // default true
+  actor?: ActorRef;          // attore principale
+  showCompany?: boolean;     // default true
+  showActor2?: boolean;      // non usato, mantenuto per compat
   className?: string;
-  refreshMs?: number;    // auto-refresh
-  compact?: boolean;     // solo numeri se true
+  refreshMs?: number;        // default 1500
+  compact?: boolean;         // solo numeri se true
 };
 
-type BalanceItem = { id: string; label: string; balance: number; low: boolean };
+export default function CreditsBadge(props: CreditsBadgeProps) {
+  const {
+    actor,
+    showCompany = true,
+    className,
+    refreshMs = 1500,
+    compact = false,
+  } = props;
 
-export default function CreditsBadge({
-  actor,
-  showCompany = true,
-  showActor = true,
-  className,
-  refreshMs,
-  compact,
-}: CreditsBadgeProps) {
-  const [items, setItems] = React.useState<BalanceItem[]>([]);
+  const [balances, setBalances] = React.useState<{ id: string; balance: number; low: boolean }[]>([]);
 
-  const refresh = React.useCallback(async () => {
-    const ids: { id: string; label: string }[] = [];
-    if (actor && showCompany && actor.companyId) {
-      ids.push({ id: accountId("company", actor.companyId), label: "Azienda" });
-    }
-    if (actor && showActor) {
-      ids.push({ id: accountId(actor.ownerType, actor.ownerId), label: labelForActor(actor.ownerType) });
-    }
-    if (ids.length === 0) return setItems([]);
+  const ids = React.useMemo(() => {
+    if (!actor) return [];
+    const list: string[] = [];
+    // account actor
+    list.push(getAccountId(actor.ownerType, actor.ownerId));
+    // account company
+    if (showCompany && actor.companyId) list.push(getAccountId("company", actor.companyId));
+    return list;
+  }, [actor, showCompany]);
 
-    const balances = await Promise.resolve(getBalances(ids.map((x) => x.id)));
-    const next: BalanceItem[] = balances.map((b: any, i: number) => ({
-      id: b.id,
-      label: ids[i].label,
-      balance: Number(b?.balance ?? 0),
-      low: Boolean(b?.low),
-    }));
-    setItems(next);
-  }, [actor, showCompany, showActor]);
+  const refresh = React.useCallback(() => {
+    if (!ids.length) return;
+    setBalances(getBalancesByIds(ids));
+  }, [ids]);
 
-  React.useEffect(() => { void refresh(); }, [refresh]);
   React.useEffect(() => {
-    if (!refreshMs) return;
-    const t = setInterval(() => void refresh(), Math.max(1000, refreshMs));
-    return () => clearInterval(t);
-  }, [refreshMs, refresh]);
+    refresh();
+    if (!ids.length) return;
+    const t = window.setInterval(refresh, refreshMs);
+    return () => window.clearInterval(t);
+  }, [refresh, ids, refreshMs]);
 
-  if (!items.length) return null;
+  if (!actor || ids.length === 0) return null;
+
+  const byId = Object.fromEntries(balances.map((b) => [b.id, b]));
+  const accActor = byId[getAccountId(actor.ownerType, actor.ownerId)];
+  const accCompany = showCompany && actor.companyId ? byId[getAccountId("company", actor.companyId)] : undefined;
+
+  const renderPill = (label: string, bal?: { balance: number; low: boolean }) => {
+    if (!bal) return null;
+    const content = compact ? bal.balance : `${label}: ${bal.balance} cr`;
+    return (
+      <Badge
+        key={label}
+        className={clsx(
+          "gap-1 font-mono",
+          bal.low ? "bg-amber-600/20 text-amber-300" : "bg-slate-700/40 text-slate-200"
+        )}
+      >
+        {bal.low ? <AlertTriangle className="h-3.5 w-3.5" /> : <CreditCard className="h-3.5 w-3.5" />}
+        {content}
+      </Badge>
+    );
+  };
 
   return (
-    <div className={cn("flex items-center gap-2", className)}>
-      {items.map((it) => (
-        <Badge
-          key={it.id}
-          variant="secondary"
-          className={cn(
-            "rounded-full px-2.5 py-0.5 text-xs font-medium gap-1 inline-flex items-center",
-            it.low && "ring-1 ring-amber-500/40"
-          )}
-          title={`${it.label}: ${it.balance} crediti${it.low ? " • soglia bassa" : ""}`}
-        >
-          <CreditCard className="h-3 w-3" aria-hidden />
-          {compact ? (
-            <span className="tabular-nums">{it.balance}</span>
-          ) : (
-            <>
-              <span className="hidden sm:inline">{it.label}</span>
-              <span className="tabular-nums">{it.balance}</span>
-            </>
-          )}
-          {it.low && <AlertTriangle className="h-3 w-3" aria-hidden />}
-        </Badge>
-      ))}
+    <div className={clsx("flex items-center gap-2", className)}>
+      {renderPill("actor", accActor)}
+      {showCompany && renderPill("company", accCompany)}
     </div>
   );
-}
-
-function labelForActor(t: AccountOwnerType): string {
-  if (t === "creator") return "Creator";
-  if (t === "operator") return "Operatore";
-  if (t === "machine") return "Macchina";
-  if (t === "company") return "Azienda";
-  if (t === "admin") return "Admin";
-  return t;
 }

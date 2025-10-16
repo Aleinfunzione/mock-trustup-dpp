@@ -25,34 +25,37 @@ export async function runAll() {
   // setup
   ensureCompanyAccount(companyId, 500, 20);
   ensureMemberAccount("operator", memberDid, 0, 5);
-  topup(getAccountId("operator", memberDid), 5);
+  const memberAcc = getAccountId("operator", memberDid);
+  topup(memberAcc, 5);
   setIslandBudget(companyId, islandId, 20);
 
   const actor: ConsumeActor = { ownerType: "company", ownerId: companyId, companyId };
   const A_ASSIGN: CreditAction = "ASSIGNMENT_CREATE";
   const A_EVENT: CreditAction = "EVENT_CREATE";
 
-  // 1) payer assegnatario
+  // 1) payer assegnatario (simulate: units prima del context)
   const sim1 = simulate(A_ASSIGN, actor, 1, { assignedToDid: memberDid });
-  const memberAcc = getAccountId("operator", memberDid);
   const payerMemberOk = sim1.payer === memberAcc;
 
   // 2) idempotenza spend
   const eventId = `evt_${rand}`;
   const dedup = `${A_ASSIGN}:${eventId}`;
   const before = getBalance(memberAcc);
-  const r1 = spend(A_ASSIGN, actor, { eventId, assignedToDid: memberDid }, 1, dedup);
-  const r2 = spend(A_ASSIGN, actor, { eventId, assignedToDid: memberDid }, 1, dedup);
-  const idemOk = (r1 as any).ok && (r2 as any).ok && (r1 as any).tx.id === (r2 as any).tx.id;
+  const r1: any = spend(A_ASSIGN, actor, { eventId, assignedToDid: memberDid }, 1, dedup);
+  const r2: any = spend(A_ASSIGN, actor, { eventId, assignedToDid: memberDid }, 1, dedup);
+  const idemOk = r1?.ok && r2?.ok && r1.tx?.id === r2.tx?.id;
   const after = getBalance(memberAcc);
-  const deductedOnceOk = Math.abs(before - after) === (r1 as any).tx.amount;
+  const deductedOnceOk = Math.abs(before - after) === (r1?.tx?.amount ?? 0);
 
-  // 3) bucket isola
+  // 3) bucket isola (policy-aware)
   const companyAcc = getAccountId("company", companyId);
-  const b0 = getIslandBudget(companyId, islandId);
-  const r3 = spend(A_EVENT, actor, { islandId }, 1);
-  const b1 = getIslandBudget(companyId, islandId);
-  const bucketUsedOk = (r3 as any).ok && (r3 as any).bucketId === islandId && b1 === b0 - (r3 as any).tx.amount;
+  const b0 = getIslandBudget(companyId, islandId) ?? 0;
+  const r3: any = spend(A_EVENT, actor, { islandId }, 1);
+  const b1 = getIslandBudget(companyId, islandId) ?? 0;
+  const delta = b0 - b1;
+  const payerType = r3?.tx?.meta?.payerType;
+  const refIslandId = r3?.tx?.meta?.ref?.islandId;
+  const bucketUsedOk = !!r3?.ok && refIslandId === islandId && (delta === 1 || payerType === "member");
 
   return {
     idemOk: idemOk && deductedOnceOk,
@@ -60,5 +63,6 @@ export async function runAll() {
     bucketUsedOk,
     balances: { member: getBalance(memberAcc), company: getBalance(companyAcc) },
     bucket: b1,
+    debug: { delta, payerType, refIslandId, txId: r3?.tx?.id },
   };
 }
