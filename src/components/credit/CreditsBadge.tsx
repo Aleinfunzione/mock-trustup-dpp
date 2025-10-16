@@ -13,32 +13,24 @@ type ActorRef = {
 };
 
 type CreditsBadgeProps = {
-  actor?: ActorRef;          // attore principale
+  actor?: ActorRef;
   showCompany?: boolean;     // default true
-  showActor2?: boolean;      // non usato, mantenuto per compat
+  showActor2?: boolean;      // legacy, ignorato
   className?: string;
   refreshMs?: number;        // default 1500
   compact?: boolean;         // solo numeri se true
 };
 
 export default function CreditsBadge(props: CreditsBadgeProps) {
-  const {
-    actor,
-    showCompany = true,
-    className,
-    refreshMs = 1500,
-    compact = false,
-  } = props;
+  const { actor, showCompany = true, className, refreshMs = 1500, compact = false } = props;
 
   const [balances, setBalances] = React.useState<{ id: string; balance: number; low: boolean }[]>([]);
 
   const ids = React.useMemo(() => {
     if (!actor) return [];
     const list: string[] = [];
-    // account actor
-    list.push(getAccountId(actor.ownerType, actor.ownerId));
-    // account company
-    if (showCompany && actor.companyId) list.push(getAccountId("company", actor.companyId));
+    list.push(getAccountId(actor.ownerType, actor.ownerId));          // actor
+    if (showCompany && actor.companyId) list.push(getAccountId("company", actor.companyId)); // company
     return list;
   }, [actor, showCompany]);
 

@@ -50,9 +50,19 @@ function nowISO(): string {
 }
 
 function randomHex(bytes = 8): string {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  return Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const toHex = (n: number) => n.toString(16).padStart(2, "0");
+  try {
+    const c = (globalThis as any)?.crypto as Crypto | undefined;
+    if (c?.getRandomValues) {
+      const arr = new Uint8Array(bytes);
+      c.getRandomValues(arr);
+      return Array.from(arr).map((b) => toHex(b)).join("");
+    }
+  } catch {
+    /* noop */
+  }
+  // Fallback non-crittografico
+  return Array.from({ length: bytes }, () => toHex(Math.floor(Math.random() * 256))).join("");
 }
 
 function isCompanyAssignableRole(

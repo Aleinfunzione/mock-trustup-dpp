@@ -15,7 +15,6 @@ import {
   transfer,
   listAccounts as storeListAccounts,
   setLowBalanceThreshold,
-  // bucket isole
   getIslandBudget,
   setIslandBudget,
   addToIslandBudget,
@@ -106,7 +105,7 @@ export function getBalances(accountIds: string[]) {
 export function getAccountBalance(accountId: string) {
   return storeGetBalance(accountId);
 }
-export const getBalance = getAccountBalance; // alias compat
+export const getBalance = getAccountBalance;
 
 export function accountId(ownerType: AccountOwnerType, ownerId: string) {
   return getAccountId(ownerType, ownerId);
@@ -121,8 +120,8 @@ export function listCompanyAccounts(): Array<{ did: string }> {
 /* Simulation / spend                                                                 */
 /* ---------------------------------------------------------------------------------- */
 
-export function simulate(action: CreditAction, actor: ConsumeActor, qty = 1) {
-  return storeSimulate(action, actor, qty);
+export function simulate(action: CreditAction, actor: ConsumeActor, qty = 1, context?: any) {
+  return storeSimulate(action, actor, qty, context);
 }
 
 export function simulateCost(
@@ -136,13 +135,16 @@ export function simulateCost(
         ownerId?: string;
         companyId?: string;
         qty?: number;
+        context?: any;
       },
   maybeActor?: ConsumeActor,
-  maybeQty = 1
+  maybeQty = 1,
+  maybeContext?: any
 ) {
   let action: CreditAction;
   let actor: ConsumeActor;
   let qty: number;
+  let context: any;
 
   if (typeof actionOrParams === "object") {
     action = actionOrParams.action;
@@ -151,15 +153,17 @@ export function simulateCost(
     const companyId = (actionOrParams as any).companyId ?? (actionOrParams as any).company;
     actor = { ownerType, ownerId, companyId } as ConsumeActor;
     qty = Number.isInteger(actionOrParams.qty) && actionOrParams.qty! > 0 ? actionOrParams.qty! : 1;
+    context = actionOrParams.context;
   } else {
     action = actionOrParams;
     actor = maybeActor as ConsumeActor;
     qty = Number.isInteger(maybeQty) && maybeQty > 0 ? maybeQty : 1;
+    context = maybeContext;
   }
 
-  const res = storeSimulate(action, actor, qty);
-  if (!res.payer) {
-    const reason = String(res.reason ?? CREDIT_ERRORS.INSUFFICIENT_FUNDS);
+  const res = storeSimulate(action, actor, qty, context);
+  if (!(res as any).payer) {
+    const reason = String((res as any).reason ?? CREDIT_ERRORS.INSUFFICIENT_FUNDS);
     const err: any = new Error(reason);
     err.code = reason;
     throw err;

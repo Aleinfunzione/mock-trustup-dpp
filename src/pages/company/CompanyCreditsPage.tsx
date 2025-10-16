@@ -14,6 +14,9 @@ import {
   transferBetween,
   setThreshold,
   ensureMemberAccount,
+  // bucket isole (usa API, non lo store)
+  getIslandBudget,
+  setIslandBudget,
 } from "@/services/api/credits";
 import type { AccountOwnerType } from "@/types/credit";
 import CreditsBadge from "@/components/credit/CreditsBadge";
@@ -22,8 +25,6 @@ import CreditsBadge from "@/components/credit/CreditsBadge";
 import * as IdentityApi from "@/services/api/identity";
 // eventi → seed isole
 import { listEvents } from "@/services/api/events";
-// bucket isole
-import { getIslandBudget, setIslandBudget } from "@/stores/creditStore";
 
 type Bal = { id: string; balance: number; low?: boolean };
 type Actor = { did: string; role?: string; name?: string };
