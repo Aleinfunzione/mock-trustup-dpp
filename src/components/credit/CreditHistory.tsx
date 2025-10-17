@@ -1,6 +1,6 @@
 // src/components/credit/CreditHistory.tsx
 import * as React from "react";
-import { listTransactions, listAccounts } from "@/stores/creditStore";
+import { listTransactions, listAccounts } from "@/services/api/credits";
 import type { CreditTx } from "@/types/credit";
 import { downloadCreditTxCsv } from "@/utils/csv";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
@@ -16,11 +16,11 @@ const UI_KEY = "trustup:creditHistory:ui";
 function useTx(accountId?: string) {
   const [tx, setTx] = React.useState<CreditTx[]>([]);
   const refresh = React.useCallback(() => {
-    setTx(listTransactions(accountId ? { accountId } : undefined));
+    setTx(listTransactions(accountId ? { accountId } : undefined) as unknown as CreditTx[]);
   }, [accountId]);
   React.useEffect(() => {
     refresh();
-    const onStorage = (e: StorageEvent) => e.key?.includes("trustup:credits") && refresh();
+    const onStorage = (e: StorageEvent) => e.key?.startsWith("trustup:credits") && refresh();
     window.addEventListener("storage", onStorage);
     const id = window.setInterval(refresh, 1500);
     return () => { window.removeEventListener("storage", onStorage); window.clearInterval(id); };
@@ -88,7 +88,7 @@ export default function CreditHistory() {
     const actor = actorDid.trim().toLowerCase();
     const isl = islandId.trim();
 
-    return tx.filter((x) => {
+    return (tx as CreditTx[]).filter((x) => {
       if (t !== "all" && x.type !== t) return false;
 
       const tsMs = new Date(x.ts).getTime();
@@ -96,12 +96,13 @@ export default function CreditHistory() {
       if (Number.isFinite(msTo) && tsMs > (msTo as number)) return false;
 
       const m: any = x.meta || {};
+      const topRef: any = x.ref || {};
       if (actor) {
-        const inMeta = (m.ref?.actorDid || m.actor?.ownerId || "").toLowerCase();
+        const inMeta = (m.ref?.actorDid || m.actor?.ownerId || topRef.actorDid || "").toLowerCase();
         if (!inMeta.includes(actor)) return false;
       }
       if (isl) {
-        const islMeta = m.ref?.islandId || "";
+        const islMeta = topRef.islandId || m.ref?.islandId || "";
         if (!String(islMeta).includes(isl)) return false;
       }
 
@@ -198,7 +199,7 @@ export default function CreditHistory() {
               <tr><td className="py-4 text-muted-foreground" colSpan={12}>Nessuna transazione</td></tr>
             ) : filtered.slice().reverse().map((x) => {
               const m: any = x.meta || {};
-              const ref: any = m.ref || {};
+              const ref: any = x.ref || m.ref || {};
               const post =
                 m.balance_after ??
                 m.postBalance ??
