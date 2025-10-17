@@ -25,6 +25,9 @@ import * as IdentityApi from "@/services/api/identity";
 type Bal = { id: string; balance: number; low?: boolean };
 type Company = { did: string; name?: string };
 
+// alias per aggirare tipizzazione rigida del badge
+const CreditsBadgeAny = CreditsBadge as unknown as React.ComponentType<any>;
+
 export default function AdminCreditsPage() {
   const { currentUser } = useAuthStore();
   const { toast } = useToast();
@@ -177,9 +180,9 @@ export default function AdminCreditsPage() {
 
           {/* Badges */}
           <div className="flex items-center gap-2">
-            <CreditsBadge actor={{ ownerType: "admin", ownerId: adminDid }} showCompany={false} />
+            <CreditsBadgeAny actor={{ ownerType: "admin", ownerId: adminDid }} showCompany={false} />
             {companyAcc && (
-              <CreditsBadge actor={{ ownerType: "company", ownerId: companyDid }} showActor={false} />
+              <CreditsBadgeAny actor={{ ownerType: "company", ownerId: companyDid }} showActor={false} />
             )}
           </div>
 
@@ -273,8 +276,39 @@ async function loadCompanies(): Promise<Company[]> {
   return dedupeCompanies(fromStorage);
 }
 
+function isCompanyDid(did?: string): boolean {
+  if (!did || typeof did !== "string") return false;
+  if (/(^|:)cmp-/.test(did)) return true;
+  if (/(^|:)company(:|$)/.test(did)) return true;
+  if (/(^|:)op-|(^|:)operator|(^|:)usr-|(^|:)machine/.test(did)) return false;
+  return false;
+}
+
+function isCompanyActor(a: any): boolean {
+  return a?.role === "company" || a?.type === "company" || a?.isCompany === true || isCompanyDid(a?.did);
+}
+
 async function discoverCompaniesFromIdentity(): Promise<Company[]> {
   const api: any = IdentityApi as any;
+
+  try {
+    const listActors = api?.listActors;
+    if (typeof listActors === "function") {
+      const actors = await Promise.resolve(listActors());
+      const viaActors: Company[] = (Array.isArray(actors) ? actors : [])
+        .map((a: any) => {
+          const did = a?.companyDid && typeof a.companyDid === "string" ? a.companyDid : a?.did;
+          if (!did) return null;
+          if (a?.role === "company" || isCompanyDid(did)) {
+            return { did, name: a?.companyName || a?.name || a?.displayName };
+          }
+          return null;
+        })
+        .filter(Boolean) as Company[];
+      if (viaActors.length) return viaActors;
+    }
+  } catch {}
+
   const nameCandidates = [
     "listCompanies","getCompanies","listOrganizations","getOrganizations",
     "listAllCompanies","listOrgs","companies","orgs","list"
@@ -289,6 +323,7 @@ async function discoverCompaniesFromIdentity(): Promise<Company[]> {
       } catch {}
     }
   }
+
   for (const name of nameCandidates) {
     const val = api?.[name];
     if (Array.isArray(val)) {
@@ -296,6 +331,7 @@ async function discoverCompaniesFromIdentity(): Promise<Company[]> {
       if (arr.length) return arr;
     }
   }
+
   try {
     const allExports = Object.values(api);
     for (const v of allExports) {
@@ -318,12 +354,20 @@ async function discoverCompaniesFromIdentity(): Promise<Company[]> {
 function normalizeCompanyArray(x: any): Company[] {
   if (!x) return [];
   const arr = Array.isArray(x) ? x : Array.isArray(x?.companies) ? x.companies : [];
-  return arr
-    .map((c: any) => ({
-      did: c?.did || c?.id || "",
-      name: c?.name || c?.displayName || c?.title,
-    }))
-    .filter((c: Company) => typeof c.did === "string" && c.did.startsWith("did:"));
+  const out: Company[] = [];
+  for (const c of arr) {
+    if (!c) continue;
+    const did =
+      (typeof c.companyDid === "string" && c.companyDid.startsWith("did:") && c.companyDid) ||
+      (typeof c.did === "string" && c.did.startsWith("did:") && c.did) ||
+      (typeof c.id === "string" && c.id.startsWith("did:") && c.id) ||
+      "";
+    if (!did) continue;
+    if (c.role === "company" || c.type === "company" || isCompanyDid(did)) {
+      out.push({ did, name: c?.name || c?.companyName || c?.displayName || c?.title });
+    }
+  }
+  return out;
 }
 
 function dedupeCompanies(list: Company[]): Company[] {
@@ -351,7 +395,7 @@ function discoverCompaniesFromStorage(): Company[] {
 function scanObjectForCompanyDid(v: any, out: Company[]) {
   if (!v) return;
   const push = (did?: string, name?: string) => {
-    if (typeof did === "string" && did.startsWith("did:")) out.push({ did, name });
+    if (typeof did === "string" && did.startsWith("did:") && isCompanyDid(did)) out.push({ did, name });
   };
   if (Array.isArray(v)) {
     for (const it of v) scanObjectForCompanyDid(it, out);

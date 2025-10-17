@@ -6,11 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { StandardsRegistry, type StandardId } from "@/config/standardsRegistry";
-import { useCredentialStore } from "@/stores/credentialStore";
 import { useAuthStore } from "@/stores/authStore";
-import type { VerifiableCredential } from "@/domains/credential/entities";
-import { verifyVC } from "@/domains/credential/services";
-import OrgCredentialForm, { OrgCredValue } from "@/components/credentials/OrgCredentialForm";
+import type { VC, VCStatus } from "@/types/vc";
+import {
+  createOrganizationVC,
+  listVCs,
+  revokeVC,
+  supersedeVC,
+  verifyIntegrity,
+} from "@/services/api/vc";
 
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
@@ -21,11 +25,23 @@ import {
   CommandGroup,
   CommandItem,
 } from "@/components/ui/command";
-import { ChevronsUpDown, Check } from "lucide-react";
+import { ChevronsUpDown, Check, BadgeCheck, Ban, RefreshCcw, PlusCircle, FileJson } from "lucide-react";
 import { cn } from "@/lib/utils";
+import VerifyFlag from "@/components/vc/VerifyFlag";
+import CopyJsonBox from "@/components/vc/CopyJsonBox";
+import { exportVC, exportVP } from "@/services/standards/export";
 
 type OrgStandard = Extract<StandardId, "ISO9001" | "ISO14001" | "TUV">;
 const ORG_STANDARDS: readonly OrgStandard[] = ["ISO9001", "ISO14001", "TUV"] as const;
+
+type OrgCredValue = {
+  certificationNumber: string;
+  issuingBody: string;
+  validFrom: string; // YYYY-MM-DD
+  validUntil: string; // YYYY-MM-DD
+  scopeStatement?: string;
+  evidenceLink?: string;
+};
 
 function StandardCombobox({
   value,
@@ -86,111 +102,187 @@ function StandardCombobox({
 export default function OrganizationCredentialPage() {
   const { currentUser } = useAuthStore();
   const issuerDid = currentUser?.companyDid || currentUser?.did || "";
-  const { org, upsertOrgVC, load } = useCredentialStore();
+  const subjectId =
+    (currentUser as any)?.companyId || currentUser?.companyDid || currentUser?.did || "org:default";
 
   const [standard, setStandard] = React.useState<OrgStandard>("ISO9001");
-  const selectedStandardLabel = StandardsRegistry[standard].title;
+  const [busy, setBusy] = React.useState(false);
+  const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+  const [okMsg, setOkMsg] = React.useState<string | null>(null);
 
-  const existingVC: VerifiableCredential<any> | undefined = org?.[standard];
-
+  // form
   const [form, setForm] = React.useState<OrgCredValue>({
-    certificationNumber: existingVC?.credentialSubject?.certificationNumber ?? "",
-    issuingBody: existingVC?.credentialSubject?.issuingBody ?? "",
-    validFrom: existingVC?.credentialSubject?.validFrom ?? "",
-    validUntil: existingVC?.credentialSubject?.validUntil ?? "",
-    scopeStatement: existingVC?.credentialSubject?.scopeStatement ?? "",
-    evidenceLink: existingVC?.credentialSubject?.evidenceLink ?? "",
+    certificationNumber: "",
+    issuingBody: "",
+    validFrom: "",
+    validUntil: "",
+    scopeStatement: "",
+    evidenceLink: "",
   });
 
-  const [validMsg, setValidMsg] = React.useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
-  const [previewVC, setPreviewVC] = React.useState<VerifiableCredential<any> | null>(null);
-  const [verifStatus, setVerifStatus] = React.useState<"idle" | "valid" | "invalid">("idle");
-  const [busy, setBusy] = React.useState<boolean>(false);
+  // elenco VC org (tutte) + selezione corrente per standard
+  const [list, setList] = React.useState<VC[]>([]);
+  const selectedSchemaId = standard as StandardId;
+
+  const currentVC = React.useMemo(() => {
+    const sameSchema = list.filter((v) => v.schemaId === selectedSchemaId);
+    if (!sameSchema.length) return undefined;
+    return sameSchema
+      .slice()
+      .sort((a, b) => (b.version ?? 0) - (a.version ?? 0) || (b.updatedAt || "").localeCompare(a.updatedAt || ""))
+      [0];
+  }, [list, selectedSchemaId]);
+
+  const [preview, setPreview] = React.useState<VC | null>(null);
+  const [integrity, setIntegrity] = React.useState<{ valid: boolean; expectedHash: string; actualHash: string } | null>(
+    null
+  );
+
+  // load
+  async function reload() {
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      const out = await listVCs({
+        subjectType: "organization",
+        subjectId,
+      });
+      setList(out);
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Errore caricamento VC");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   React.useEffect(() => {
-    load?.();
-  }, [load]);
+    void reload();
+  }, []); // eslint-disable-line
 
+  // cambia standard → reset form e preview
   React.useEffect(() => {
     setForm({
-      certificationNumber: existingVC?.credentialSubject?.certificationNumber ?? "",
-      issuingBody: existingVC?.credentialSubject?.issuingBody ?? "",
-      validFrom: existingVC?.credentialSubject?.validFrom ?? "",
-      validUntil: existingVC?.credentialSubject?.validUntil ?? "",
-      scopeStatement: existingVC?.credentialSubject?.scopeStatement ?? "",
-      evidenceLink: existingVC?.credentialSubject?.evidenceLink ?? "",
+      certificationNumber: currentVC?.data?.certificationNumber ?? "",
+      issuingBody: currentVC?.data?.issuingBody ?? "",
+      validFrom: currentVC?.data?.validFrom ?? "",
+      validUntil: currentVC?.data?.validUntil ?? "",
+      scopeStatement: currentVC?.data?.scopeStatement ?? "",
+      evidenceLink: currentVC?.data?.evidenceLink ?? "",
     });
-    setValidMsg(null);
+    setPreview(null);
+    setIntegrity(null);
+    setOkMsg(null);
     setErrorMsg(null);
-    setPreviewVC(null);
-    setVerifStatus("idle");
-  }, [standard, existingVC?.credentialSubject]);
+  }, [standard, currentVC?.id]);
 
-  async function handleSaveAndSign() {
+  async function handleVerify(v?: VC) {
+    setBusy(true);
+    setErrorMsg(null);
+    setOkMsg(null);
     try {
-      setBusy(true);
-      setErrorMsg(null);
-      setValidMsg(null);
-      setPreviewVC(null);
-      setVerifStatus("idle");
-
-      if (!issuerDid) throw new Error("Issuer DID non disponibile");
-      if (!form.certificationNumber || !form.issuingBody || !form.validFrom || !form.validUntil) {
-        throw new Error("Campi obbligatori mancanti");
-      }
-      if (new Date(`${form.validFrom}T00:00:00`) > new Date(`${form.validUntil}T00:00:00`)) {
-        throw new Error("Intervallo date non valido");
-      }
-
-      const vc: VerifiableCredential<any> = {
-        "@context": ["https://www.w3.org/2018/credentials/v1"],
-        type: ["VerifiableCredential", `Org${standard}`],
-        issuer: issuerDid,
-        issuanceDate: new Date().toISOString(),
-        credentialSubject: { ...form },
-        proof: { type: "Ed25519Signature2020", created: new Date().toISOString() } as any,
-      };
-
-      const ver = await verifyVC(vc);
-      upsertOrgVC(standard, vc);
-      setPreviewVC(vc);
-      setVerifStatus(ver.valid ? "valid" : "invalid");
-      setValidMsg(ver.valid ? "VC firmata e verificata" : "VC firmata ma NON verificata");
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Errore creazione VC");
+      const target = v ?? currentVC;
+      if (!target) throw new Error("Nessuna VC da verificare");
+      const res = await verifyIntegrity(target.id);
+      setIntegrity(res);
+      setPreview(target);
+      setOkMsg(res.valid ? "Integrità: OK" : "Integrità: NON valida");
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Errore verifica");
     } finally {
       setBusy(false);
     }
   }
 
-  async function onVerifyExisting() {
+  function validateForm() {
+    if (!issuerDid) throw new Error("Issuer DID non disponibile");
+    if (!form.certificationNumber || !form.issuingBody || !form.validFrom || !form.validUntil) {
+      throw new Error("Campi obbligatori mancanti");
+    }
+    const d1 = new Date(`${form.validFrom}T00:00:00`);
+    const d2 = new Date(`${form.validUntil}T00:00:00`);
+    if (d1 > d2) throw new Error("Intervallo date non valido");
+  }
+
+  async function handleCreate() {
     try {
       setBusy(true);
       setErrorMsg(null);
-      setValidMsg(null);
-      setPreviewVC(null);
-      setVerifStatus("idle");
-
-      if (!existingVC) throw new Error("Nessuna VC esistente per questo standard");
-      const ver = await verifyVC(existingVC);
-      setVerifStatus(ver.valid ? "valid" : "invalid");
-      setValidMsg(ver.valid ? "VC esistente: verificata" : "VC esistente: NON verificata");
-      setPreviewVC(existingVC);
-      setForm(existingVC.credentialSubject || {});
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Errore verifica VC");
+      setOkMsg(null);
+      validateForm();
+      const vc = await createOrganizationVC({
+        schemaId: selectedSchemaId,
+        issuerDid,
+        subjectId,
+        data: { ...form },
+      });
+      setPreview(vc);
+      await reload();
+      setOkMsg("VC pubblicata");
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Errore creazione VC");
     } finally {
       setBusy(false);
     }
   }
+
+  async function handleSupersede() {
+    try {
+      setBusy(true);
+      setErrorMsg(null);
+      setOkMsg(null);
+      if (!currentVC) throw new Error("Nessuna VC da sostituire");
+      validateForm();
+      const out = await supersedeVC(currentVC.id, { ...form });
+      setPreview(out.next);
+      await reload();
+      setOkMsg("VC sostituita");
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Errore supersede");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRevoke() {
+    try {
+      setBusy(true);
+      setErrorMsg(null);
+      setOkMsg(null);
+      if (!currentVC) throw new Error("Nessuna VC da revocare");
+      await revokeVC(currentVC.id, "revocata su richiesta");
+      await reload();
+      setOkMsg("VC revocata");
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Errore revoca");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleExportVP() {
+    const vcs = list.filter((v) => v.schemaId === selectedSchemaId);
+    const vp = {
+      "@context": ["https://www.w3.org/2018/credentials/v1"],
+      type: ["VerifiablePresentation"],
+      holder: subjectId,
+      verifiableCredential: vcs,
+      meta: {
+        scope: "organization",
+        standard: selectedSchemaId,
+        generatedAt: new Date().toISOString(),
+      },
+    };
+    exportVP(vp, `org_${selectedSchemaId}`);
+  }
+
+  const selectedStandardLabel = StandardsRegistry[standard].title;
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Credenziali organizzazione</CardTitle>
-          <CardDescription>Gestisci ISO9001, ISO14001, TÜV come VC.</CardDescription>
+          <CardDescription>Gestisci ISO9001, ISO14001, TÜV come Verifiable Credential.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid sm:grid-cols-2 gap-3">
@@ -198,7 +290,7 @@ export default function OrganizationCredentialPage() {
               <Label>Standard</Label>
               <StandardCombobox
                 value={standard}
-                onChange={(v) => setStandard(v)}
+                onChange={setStandard}
                 disabled={busy}
                 options={ORG_STANDARDS.map((id) => ({
                   id,
@@ -215,40 +307,198 @@ export default function OrganizationCredentialPage() {
             </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" disabled={busy}>
               <Link to="/company/compliance">Indietro</Link>
             </Button>
-            <Button variant="secondary" onClick={onVerifyExisting} disabled={busy || !existingVC}>
-              Verifica VC esistente
+            <Button variant="secondary" onClick={() => handleVerify()} disabled={busy || !currentVC}>
+              <BadgeCheck className="h-4 w-4 mr-2" />
+              Verifica VC corrente
+            </Button>
+            <Button variant="outline" onClick={handleExportVP} disabled={busy || !list.length}>
+              <FileJson className="h-4 w-4 mr-2" />
+              Export VP (schema)
+            </Button>
+            <Button variant="destructive" onClick={handleRevoke} disabled={busy || !currentVC}>
+              <Ban className="h-4 w-4 mr-2" />
+              Revoca VC
             </Button>
           </div>
         </CardContent>
       </Card>
 
       {errorMsg && <div className="text-sm text-destructive">{errorMsg}</div>}
-      {validMsg && <div className="text-sm">{validMsg}</div>}
+      {okMsg && <div className="text-sm">{okMsg}</div>}
 
-      <OrgCredentialForm
-        standardLabel={selectedStandardLabel}
-        issuerDid={issuerDid}
-        value={form}
-        onChange={setForm}
-        onSubmit={handleSaveAndSign}
-        submitting={busy}
-      />
+      {/* FORM DATI VC */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Dati VC — {selectedStandardLabel}</CardTitle>
+          <CardDescription>Compila i campi richiesti dallo schema.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <Label>Certification number</Label>
+              <Input
+                value={form.certificationNumber}
+                onChange={(e) => setForm((s) => ({ ...s, certificationNumber: e.target.value }))}
+                placeholder="es. ISO-9001-ABC-2025"
+              />
+            </div>
+            <div>
+              <Label>Issuing body</Label>
+              <Input
+                value={form.issuingBody}
+                onChange={(e) => setForm((s) => ({ ...s, issuingBody: e.target.value }))}
+                placeholder="es. TÜV, SGS, DNV"
+              />
+            </div>
+            <div>
+              <Label>Valid from</Label>
+              <Input
+                type="date"
+                value={form.validFrom}
+                onChange={(e) => setForm((s) => ({ ...s, validFrom: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label>Valid until</Label>
+              <Input
+                type="date"
+                value={form.validUntil}
+                onChange={(e) => setForm((s) => ({ ...s, validUntil: e.target.value }))}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Scope statement</Label>
+              <Input
+                value={form.scopeStatement || ""}
+                onChange={(e) => setForm((s) => ({ ...s, scopeStatement: e.target.value }))}
+                placeholder="ambito certificazione"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Evidence link</Label>
+              <Input
+                value={form.evidenceLink || ""}
+                onChange={(e) => setForm((s) => ({ ...s, evidenceLink: e.target.value }))}
+                placeholder="URL a certificato PDF"
+              />
+            </div>
+          </div>
 
-      {previewVC && (
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={handleCreate} disabled={busy}>
+              <PlusCircle className="h-4 w-4 mr-2" />
+              Pubblica VC
+            </Button>
+            <Button onClick={handleSupersede} variant="outline" disabled={busy || !currentVC}>
+              <RefreshCcw className="h-4 w-4 mr-2" />
+              Sostituisci (supersede)
+            </Button>
+            {currentVC && (
+              <Button
+                variant="outline"
+                onClick={() => exportVC(currentVC, `org_${selectedSchemaId}_v${currentVC.version ?? 1}`)}
+                disabled={busy || !currentVC}
+              >
+                <FileJson className="h-4 w-4 mr-2" />
+                Export VC corrente
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* LISTA VC ORGANIZZAZIONE */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Storico VC organizzazione</CardTitle>
+          <CardDescription>Filtra per standard con il selettore in alto.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b">
+                  <th className="py-2 pr-2">Standard</th>
+                  <th className="py-2 pr-2">Versione</th>
+                  <th className="py-2 pr-2">Stato</th>
+                  <th className="py-2 pr-2">Integrità</th>
+                  <th className="py-2 pr-2">Issuer</th>
+                  <th className="py-2 pr-2">Valido</th>
+                  <th className="py-2 pr-2">Costo</th>
+                  <th className="py-2 pr-2">Payer</th>
+                  <th className="py-2 pr-2">txRef</th>
+                  <th className="py-2 pr-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {list
+                  .filter((v) => v.schemaId === selectedSchemaId)
+                  .sort((a, b) => (b.version ?? 0) - (a.version ?? 0))
+                  .map((v) => {
+                    const st = (v.status || "valid") as VCStatus;
+                    const billing = (v as any).data?.billing ?? (v as any).billing;
+                    return (
+                      <tr key={v.id} className="border-b hover:bg-muted/40">
+                        <td className="py-2 pr-2">{StandardsRegistry[v.schemaId as OrgStandard]?.title ?? v.schemaId}</td>
+                        <td className="py-2 pr-2">{v.version ?? 1}</td>
+                        <td className="py-2 pr-2">
+                          {st === "valid" ? "✅ valid" : st === "revoked" ? "🛑 revoked" : st}
+                        </td>
+                        <td className="py-2 pr-2">
+                          <VerifyFlag valid={(v as any).__integrityOk ?? false} />
+                        </td>
+                        <td className="py-2 pr-2 font-mono">{v.issuerDid?.slice(0, 10)}…</td>
+                        <td className="py-2 pr-2">
+                          {v.data?.validFrom ? `${v.data.validFrom} → ${v.data.validUntil ?? "—"}` : "—"}
+                        </td>
+                        <td className="py-2 pr-2">{billing?.amount != null ? `${billing.amount}` : "—"}</td>
+                        <td className="py-2 pr-2">{billing?.payerType ?? "—"}</td>
+                        <td className="py-2 pr-2 font-mono text-xs">{billing?.txRef ?? "—"}</td>
+                        <td className="py-2 pr-2">
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="secondary" onClick={() => handleVerify(v)}>
+                              <BadgeCheck className="h-4 w-4 mr-1" />
+                              Verifica
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => exportVC(v, `org_${v.schemaId}_v${v.version ?? 1}`)}
+                            >
+                              <FileJson className="h-4 w-4 mr-1" />
+                              Export VC
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* PREVIEW JSON */}
+      {preview && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">
-              VC generata {verifStatus === "valid" ? "✅" : verifStatus === "invalid" ? "❌" : ""}
+            <CardTitle className="text-base flex items-center gap-2">
+              <FileJson className="h-4 w-4" />
+              Dettaglio VC {integrity ? (integrity.valid ? "✅" : "❌") : ""}
             </CardTitle>
+            {integrity && (
+              <CardDescription className="font-mono break-all">
+                expected={integrity.expectedHash} · actual={integrity.actualHash}
+              </CardDescription>
+            )}
           </CardHeader>
           <CardContent>
-            <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
-{JSON.stringify(previewVC, null, 2)}
-            </pre>
+            <CopyJsonBox json={preview} />
           </CardContent>
         </Card>
       )}

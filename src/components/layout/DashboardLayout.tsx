@@ -6,6 +6,7 @@ import CreditBalance from "@/components/credit/CreditBalance";
 import { useAuthStore } from "@/stores/authStore";
 import LowBalanceWatcher from "@/components/credit/LowBalanceWatcher";
 import { prefetchOnIdle } from "@/services/schema/loader";
+import CreditIndicator from "@/components/credit/CreditIndicator";
 
 export default function DashboardLayout() {
   const location = useLocation();
@@ -17,10 +18,24 @@ export default function DashboardLayout() {
     return () => cancel();
   }, []);
 
+  const watcherKey =
+    (currentUser as any)?.did ||
+    (currentUser as any)?.id ||
+    (currentUser as any)?.email ||
+    "user";
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      <Header />
-      <LowBalanceWatcher />
+      {/* Header con indicatore crediti a destra */}
+      <div className="relative">
+        <Header />
+        <div className="absolute inset-y-0 right-4 flex items-center">
+          <CreditIndicator />
+        </div>
+      </div>
+
+      {currentUser ? <LowBalanceWatcher key={watcherKey} /> : null}
+
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside className="w-72 shrink-0">

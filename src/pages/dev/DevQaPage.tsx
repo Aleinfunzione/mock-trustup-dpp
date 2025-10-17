@@ -1,50 +1,72 @@
-// src/pages/dev/DevQaPage.tsx
+// src/pages/dev/DevQaPage.tsx  (aggiunte principali)
 import * as React from "react";
-import { runAll } from "@/dev/qaCredits";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useAuthStore } from "@/stores/authStore";
+import { useToast } from "@/components/ui/use-toast";
+import { runDevSeed } from "@/storage/devSeed";
 
 export default function DevQaPage() {
-  const [res, setRes] = React.useState<any>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [err, setErr] = React.useState<string | null>(null);
+  const { currentUser } = useAuthStore();
+  const { toast } = useToast();
+  const [adminDid, setAdminDid] = React.useState(currentUser?.did || "");
+  const [companyDid, setCompanyDid] = React.useState(currentUser?.companyDid || "");
+  const [busy, setBusy] = React.useState(false);
+  const [log, setLog] = React.useState<string>("");
 
-  async function onRun() {
-    setLoading(true);
-    setErr(null);
+  async function handleSeed() {
+    if (!adminDid || !companyDid) {
+      toast({ title: "Specifica adminDid e companyDid", variant: "destructive" });
+      return;
+    }
+    setBusy(true);
     try {
-      const out = await runAll();
-      setRes(out);
+      const res = await runDevSeed({ adminDid, companyDid });
+      const lines = [
+        `OK: ${res.ok}`,
+        ...(res.notes || []).map((x) => `• ${x}`),
+        ...(res.errors || []).map((x) => `! ${x}`),
+        res.orgVC ? `OrgVC: ${res.orgVC.id}` : "",
+        res.procVC ? `ProcessVC: ${res.procVC.id}` : "",
+        res.productVC ? `ProductVC: ${res.productVC.id}` : "",
+      ].filter(Boolean);
+      setLog(lines.join("\n"));
+      toast({ title: res.ok ? "Seed completato" : "Seed con errori" });
     } catch (e: any) {
-      console.error(e);
-      setErr(e?.message ?? String(e));
-      setRes(null);
+      toast({ title: "Errore seed", description: e?.message || String(e), variant: "destructive" });
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
-    <Card className="max-w-xl">
-      <CardHeader>
-        <CardTitle>QA Crediti</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <Button onClick={onRun} disabled={loading}>
-          {loading ? "Esecuzione…" : "Esegui test"}
-        </Button>
-        {err && <div className="text-sm text-destructive">Errore: {err}</div>}
-        {res && (
-          <div className="text-sm space-y-1">
-            <div>Idempotenza spend: <b>{res.idemOk ? "OK" : "FAIL"}</b></div>
-            <div>Payer assegnatario: <b>{res.payerMemberOk ? "OK" : "FAIL"}</b></div>
-            <div>Bucket isola scalato: <b>{res.bucketUsedOk ? "OK" : "FAIL"}</b></div>
-            <pre className="mt-2 text-xs whitespace-pre-wrap font-mono">
-{JSON.stringify({ balances: res.balances, bucket: res.bucket }, null, 2)}
-            </pre>
+    <div className="space-y-6">
+      {/* ...contenuti esistenti... */}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Seed QA rapido</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Admin DID</div>
+              <Input value={adminDid} onChange={(e) => setAdminDid(e.target.value)} />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Company DID</div>
+              <Input value={companyDid} onChange={(e) => setCompanyDid(e.target.value)} />
+            </div>
           </div>
-        )}
-      </CardContent>
-    </Card>
+          <div className="flex gap-2">
+            <Button onClick={handleSeed} disabled={busy}>Esegui seed</Button>
+          </div>
+          {log && (
+            <pre className="mt-2 whitespace-pre-wrap text-xs p-2 bg-muted rounded border">{log}</pre>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

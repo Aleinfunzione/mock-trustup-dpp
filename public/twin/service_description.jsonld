@@ -1,0 +1,27 @@
+{
+  "@context": ["https://www.w3.org/2018/credentials/v1"],
+  "@id": "urn:trustup:twin:service",
+  "@type": "ServiceDescription",
+  "name": "TRUSTUP TWIN Mock",
+  "description": "Endpoint mock per ottenere una Verifiable Presentation (VP) di un prodotto con riferimenti alle VC.",
+  "serviceEndpoint": {
+    "@type": "HttpService",
+    "endpoints": [
+      {
+        "@id": "urn:trustup:twin:vp",
+        "path": "/api/vp/{productId}",
+        "method": "GET",
+        "returns": "application/json",
+        "example": {
+          "type": "VP-MOCK",
+          "productId": "prod-123",
+          "createdAt": "2025-10-17T00:00:00.000Z",
+          "vcs": [
+            { "id": "abc123", "schemaId": "ISO9001", "version": 1 },
+            { "id": "def456", "schemaId": "GS1", "version": 2 }
+          ]
+        }
+      }
+    ]
+  }
+}

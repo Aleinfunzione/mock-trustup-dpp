@@ -17,8 +17,31 @@ import { getActor } from "@/services/api/identity";
 import { getProductById, listProductsByCompany } from "@/services/api/products";
 import { getIsland } from "@/stores/orgStore";
 
+// VC + export
+import { listVCs, verifyIntegrity } from "@/services/api/vc";
+import { exportVC, exportVP } from "@/services/standards/export";
+import { exportEPCISFromProductId } from "@/services/standards/epcis";
+import { StandardsRegistry, type StandardId } from "@/config/standardsRegistry";
+
 import type { BomNode } from "@/types/product";
 import type { Product } from "@/types/product";
+
+type AnyVC = {
+  id: string;
+  standardId?: StandardId | string;
+  createdAt?: string;
+  revokedAt?: string | null;
+  supersededBy?: string | null;
+  billing?: {
+    cost?: number;
+    payerType?: string;
+    payerAccountId?: string;
+    txRef?: string;
+  };
+  proof?: unknown;
+  data?: any;
+  metadata?: any;
+};
 
 export default function ProductDetailPage() {
   const navigate = useNavigate();
@@ -42,6 +65,12 @@ export default function ProductDetailPage() {
   const [assigneeDid, setAssigneeDid] = React.useState("");
   const [timelineKey, setTimelineKey] = React.useState(0);
   const [bomLocal, setBomLocal] = React.useState<BomNode[]>([]);
+
+  // VC state
+  const [vcs, setVcs] = React.useState<AnyVC[]>([]);
+  const [vcsLoading, setVcsLoading] = React.useState<boolean>(false);
+  const [integrityMap, setIntegrityMap] = React.useState<Record<string, boolean>>({});
+  const [verifyingId, setVerifyingId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let mounted = true;
@@ -78,6 +107,53 @@ export default function ProductDetailPage() {
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, companyDid]);
+
+  // Load product VCs
+  React.useEffect(() => {
+    let mounted = true;
+    async function loadVCs() {
+      if (!id) return;
+      setVcsLoading(true);
+      try {
+        // Prefer API filter; fallback a filtro client.
+        let res: AnyVC[] = [];
+        try {
+          // @ts-ignore
+          res = (await (listVCs as any)({ type: "product", productId: id })) as AnyVC[];
+        } catch {
+          const all = (await (listVCs as any)()) as AnyVC[];
+          res = (all || []).filter((vc) => {
+            const pid =
+              vc?.data?.productId ??
+              vc?.metadata?.productId ??
+              vc?.metadata?.targetId;
+            const scope =
+              vc?.metadata?.scope ?? vc?.metadata?.target ?? vc?.data?.scope;
+            return pid === id || scope === "product";
+          });
+        }
+        if (!mounted) return;
+        setVcs(res || []);
+
+        // integrità
+        const integ: Record<string, boolean> = {};
+        for (const vc of res || []) {
+          try {
+            const r = await verifyIntegrity(vc as any);
+            const ok = (r as any)?.ok ?? (r as any)?.valid ?? false;
+            integ[vc.id] = !!ok;
+          } catch {
+            integ[vc.id] = false;
+          }
+        }
+        if (mounted) setIntegrityMap(integ);
+      } finally {
+        if (mounted) setVcsLoading(false);
+      }
+    }
+    loadVCs();
+    return () => { mounted = false; };
+  }, [id]);
 
   if (!id) {
     return (
@@ -152,8 +228,59 @@ export default function ProductDetailPage() {
     </span>
   );
 
+  // Helpers UI VC
+  function stdLabel(std?: string) {
+    if (!std) return "—";
+    try {
+      // @ts-ignore
+      return StandardsRegistry[std as StandardId]?.label ?? StandardsRegistry[std as StandardId]?.title ?? std;
+    } catch {
+      return std;
+    }
+  }
+
+  async function handleExportVP() {
+    const vp = {
+      "@context": ["https://www.w3.org/2018/credentials/v1"],
+      type: ["VerifiablePresentation"],
+      holder: prodAny?.id,
+      verifiableCredential: vcs,
+      meta: {
+        productId: prodAny?.id,
+        name: prodAny?.name,
+        generatedAt: new Date().toISOString(),
+      },
+    };
+    exportVP(vp, prodAny?.name || "product");
+  }
+
+  async function handleExportEPCIS() {
+    await exportEPCISFromProductId(prodAny.id);
+  }
+
+  async function handleVerify(vc: AnyVC) {
+    setVerifyingId(vc.id);
+    try {
+      const r = await verifyIntegrity(vc as any);
+      const ok = (r as any)?.ok ?? (r as any)?.valid ?? false;
+      setIntegrityMap((prev) => ({ ...prev, [vc.id]: !!ok }));
+    } finally {
+      setVerifyingId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
+      {/* Breadcrumb + back */}
+      <div className="flex items-center justify-between">
+        <nav className="text-sm text-muted-foreground">
+          <Link to={basePath} className="hover:underline">Prodotti</Link>
+          <span className="mx-1">/</span>
+          <span className="text-foreground">{(prodAny.name as string) ?? "Prodotto"}</span>
+        </nav>
+        <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>Indietro</Button>
+      </div>
+
       {/* Header prodotto */}
       <Card>
         <CardHeader>
@@ -202,11 +329,95 @@ export default function ProductDetailPage() {
         </CardContent>
       </Card>
 
+      {/* Certificazioni prodotto */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Certificazioni</CardTitle>
+          <CardDescription>VC associate a questo prodotto. Integrità e costo mostrati se disponibili.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button onClick={handleExportVP} size="sm">
+              Export VP (JSON-LD)
+            </Button>
+            <Button onClick={handleExportEPCIS} variant="outline" size="sm" title="EPCIS JSON-LD con certificazioni">
+              Export EPCIS
+            </Button>
+          </div>
+
+          {vcsLoading ? (
+            <div className="text-sm text-muted-foreground">Caricamento certificazioni…</div>
+          ) : vcs.length === 0 ? (
+            <div className="text-sm text-muted-foreground">Nessuna VC prodotto trovata.</div>
+          ) : (
+            <div className="space-y-2">
+              {vcs.map((vc) => {
+                const ok = integrityMap[vc.id] ?? false;
+                const std = (vc.standardId as string) || vc?.data?.standardId || vc?.metadata?.standardId;
+                const status = vc.revokedAt ? "revoked" : vc.supersededBy ? "superseded" : "active";
+                const cost = vc.billing?.cost ?? (vc as any)?.billing?.amount;
+                const payerType = vc.billing?.payerType ?? (vc as any)?.billing?.payerType;
+                const payerAccountId =
+                  vc.billing?.payerAccountId ??
+                  (vc as any)?.billing?.payerAccountId ??
+                  (vc as any)?.billing?.payerId;
+                const txRef = vc.billing?.txRef ?? (vc as any)?.billing?.txRef;
+
+                return (
+                  <div
+                    key={vc.id}
+                    className="flex flex-col gap-1 rounded-lg border p-3 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{stdLabel(std)}</span>
+                        <Badge variant={ok ? "default" : "destructive"}>
+                          {ok ? "Integrità OK" : "Integrità KO"}
+                        </Badge>
+                        <Badge variant="outline">{status}</Badge>
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        <span className="font-mono">{vc.id}</span>
+                        {typeof cost === "number" && (
+                          <span className="ml-2">• costo: {cost}</span>
+                        )}
+                        {payerType && <span className="ml-2">• payer: {payerType}</span>}
+                        {payerAccountId && (
+                          <span className="ml-2">• account: <span className="font-mono">{payerAccountId}</span></span>
+                        )}
+                        {txRef && <span className="ml-2">• tx: {txRef}</span>}
+                      </div>
+                    </div>
+                    <div className="mt-2 flex shrink-0 gap-2 md:mt-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleVerify(vc)}
+                        disabled={verifyingId === vc.id}
+                      >
+                        {verifyingId === vc.id ? "Verifica…" : "Verifica"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => exportVC(vc, `${prodAny?.name || "product"}_${std || "VC"}`)}
+                      >
+                        Export VC
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Registra evento + assegnazione opzionale */}
       <Card>
         <CardHeader>
           <CardTitle>Registra evento</CardTitle>
-      </CardHeader>
+        </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="assignee">Assegna a DID (opzionale)</Label>

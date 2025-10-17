@@ -184,6 +184,14 @@ export default function AppRouter() {
             }
           />
           <Route
+            path="/company/products/:id/credentials"
+            element={
+              <RequireRole role="company">
+                <ProductCredentialsPage />
+              </RequireRole>
+            }
+          />
+          <Route
             path="/company/products/:id/dpp"
             element={
               <RequireRole role="company">

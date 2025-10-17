@@ -26,6 +26,8 @@ import type {
   CreditTx,
   ConsumeResult as _ConsumeResult,
 } from "@/types/credit";
+// opzionale: sorgente Identity
+import * as IdentityApi from "@/services/api/identity";
 
 /* ---------------------------------------------------------------------------------- */
 /* Types & const                                                                      */
@@ -37,6 +39,8 @@ export type InitSeed = {
   members: { type: AccountOwnerType; id: string }[];
   defaults?: { balance?: number; threshold?: number };
 };
+
+export type Company = { did: string; name?: string };
 
 export const CREDIT_ERRORS = {
   INSUFFICIENT_FUNDS: "INSUFFICIENT_FUNDS",
@@ -269,6 +273,86 @@ export function ensureMemberAccount(
   threshold?: number
 ) {
   return storeEnsureMemberAccount(ownerType, ownerId, initialBalance, threshold);
+}
+
+/* ---------------------------------------------------------------------------------- */
+/* Companies discovery (centralizzato)                                                 */
+/* ---------------------------------------------------------------------------------- */
+
+export async function listCompanies(): Promise<Company[]> {
+  const fromIdentity = await discoverCompaniesFromIdentity();
+  if (fromIdentity.length) return dedupeCompanies(fromIdentity);
+  const fromLedger = listCompanyAccounts();
+  return dedupeCompanies(fromLedger);
+}
+
+async function discoverCompaniesFromIdentity(): Promise<Company[]> {
+  const api: any = IdentityApi as any;
+  const nameCandidates = [
+    "listCompanies",
+    "getCompanies",
+    "listOrganizations",
+    "getOrganizations",
+    "listAllCompanies",
+    "listOrgs",
+    "companies",
+    "orgs",
+    "list",
+  ];
+  // prefer funzioni note
+  for (const name of nameCandidates) {
+    const fn = api?.[name];
+    if (typeof fn === "function") {
+      try {
+        const res = await Promise.resolve(fn());
+        const arr = normalizeCompanyArray(res);
+        if (arr.length) return arr;
+      } catch {}
+    }
+  }
+  // poi export array
+  for (const name of nameCandidates) {
+    const val = api?.[name];
+    if (Array.isArray(val)) {
+      const arr = normalizeCompanyArray(val);
+      if (arr.length) return arr;
+    }
+  }
+  // infine tentativo su tutti gli export
+  try {
+    const allExports = Object.values(api);
+    for (const v of allExports) {
+      if (Array.isArray(v)) {
+        const arr = normalizeCompanyArray(v);
+        if (arr.length) return arr;
+      }
+      if (typeof v === "function") {
+        try {
+          const res = await Promise.resolve((v as any)());
+          const arr = normalizeCompanyArray(res);
+          if (arr.length) return arr;
+        } catch {}
+      }
+    }
+  } catch {}
+  return [];
+}
+
+function normalizeCompanyArray(x: any): Company[] {
+  if (!x) return [];
+  const arr = Array.isArray(x) ? x : Array.isArray(x?.companies) ? x.companies : [];
+  return arr
+    .map((c: any) => ({
+      did: c?.did || c?.id || "",
+      name: c?.name || c?.displayName || c?.title,
+    }))
+    .filter((c: Company) => typeof c.did === "string" && c.did.startsWith("did:"));
+}
+
+function dedupeCompanies(list: Company[]): Company[] {
+  const m = new Map<string, Company>();
+  for (const c of list) if (c.did && !m.has(c.did)) m.set(c.did, c);
+  return Array.from(m.values());
 }
 
 /* ---------------------------------------------------------------------------------- */
