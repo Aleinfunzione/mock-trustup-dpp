@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 
 import EventTimeline from "@/components/events/EventTimeline";
 import EventForm from "@/components/events/EventForm";
@@ -71,6 +72,7 @@ export default function ProductDetailPage() {
   const [vcsLoading, setVcsLoading] = React.useState<boolean>(false);
   const [integrityMap, setIntegrityMap] = React.useState<Record<string, boolean>>({});
   const [verifyingId, setVerifyingId] = React.useState<string | null>(null);
+  const [onlyValid, setOnlyValid] = React.useState<boolean>(true);
 
   React.useEffect(() => {
     let mounted = true;
@@ -269,6 +271,14 @@ export default function ProductDetailPage() {
     }
   }
 
+  const historyForTx = (tx?: string) =>
+    tx ? `/company/credits/history?txRef=${encodeURIComponent(tx)}` : "#";
+
+  const displayVCs = React.useMemo(() => {
+    if (!onlyValid) return vcs;
+    return (vcs || []).filter((vc) => !vc.revokedAt && !vc.supersededBy);
+  }, [vcs, onlyValid]);
+
   return (
     <div className="space-y-6">
       {/* Breadcrumb + back */}
@@ -336,22 +346,29 @@ export default function ProductDetailPage() {
           <CardDescription>VC associate a questo prodotto. Integrità e costo mostrati se disponibili.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="mb-3 flex flex-wrap gap-2">
-            <Button onClick={handleExportVP} size="sm">
-              Export VP (JSON-LD)
-            </Button>
-            <Button onClick={handleExportEPCIS} variant="outline" size="sm" title="EPCIS JSON-LD con certificazioni">
-              Export EPCIS
-            </Button>
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={handleExportVP} size="sm">
+                Export VP (JSON-LD)
+              </Button>
+              <Button onClick={handleExportEPCIS} variant="outline" size="sm" title="EPCIS JSON-LD con certificazioni">
+                Export EPCIS
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox id="only-valid" checked={onlyValid} onCheckedChange={(c) => setOnlyValid(!!c)} />
+              <Label htmlFor="only-valid" className="text-sm">Solo valide</Label>
+              <span className="text-xs text-muted-foreground ml-2">({displayVCs.length}/{vcs.length})</span>
+            </div>
           </div>
 
           {vcsLoading ? (
             <div className="text-sm text-muted-foreground">Caricamento certificazioni…</div>
-          ) : vcs.length === 0 ? (
+          ) : displayVCs.length === 0 ? (
             <div className="text-sm text-muted-foreground">Nessuna VC prodotto trovata.</div>
           ) : (
             <div className="space-y-2">
-              {vcs.map((vc) => {
+              {displayVCs.map((vc) => {
                 const ok = integrityMap[vc.id] ?? false;
                 const std = (vc.standardId as string) || vc?.data?.standardId || vc?.metadata?.standardId;
                 const status = vc.revokedAt ? "revoked" : vc.supersededBy ? "superseded" : "active";
@@ -361,7 +378,9 @@ export default function ProductDetailPage() {
                   vc.billing?.payerAccountId ??
                   (vc as any)?.billing?.payerAccountId ??
                   (vc as any)?.billing?.payerId;
-                const txRef = vc.billing?.txRef ?? (vc as any)?.billing?.txRef;
+                const txRef =
+                  vc.billing?.txRef ??
+                  (vc as any)?.billing?.txRef;
 
                 return (
                   <div
@@ -385,7 +404,14 @@ export default function ProductDetailPage() {
                         {payerAccountId && (
                           <span className="ml-2">• account: <span className="font-mono">{payerAccountId}</span></span>
                         )}
-                        {txRef && <span className="ml-2">• tx: {txRef}</span>}
+                        {txRef && (
+                          <span className="ml-2">
+                            • tx:{" "}
+                            <Link to={historyForTx(txRef)} className="underline font-mono">
+                              {txRef}
+                            </Link>
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="mt-2 flex shrink-0 gap-2 md:mt-0">
@@ -400,7 +426,7 @@ export default function ProductDetailPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => exportVC(vc, `${prodAny?.name || "product"}_${std || "VC"}`)}
+                        onClick={() => exportVC(vc as any, `${prodAny?.name || "product"}_${std || "VC"}`)}
                       >
                         Export VC
                       </Button>

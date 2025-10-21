@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/stores/authStore";
-import { accountId, getBalances } from "@/services/api/credits";
+import * as CreditsApi from "@/services/api/credits";
 import type { AccountOwnerType } from "@/types/credit";
 
 type Watched = { id: string; label: string };
@@ -28,8 +28,8 @@ export default function LowBalanceWatcher() {
   const { currentUser } = useAuthStore();
 
   // costruzione lista account da osservare
-  const watched = React.useMemo<Watched[]>(() => {
-    if (!currentUser) return [];
+  const { watched, companyAcc } = React.useMemo(() => {
+    if (!currentUser) return { watched: [] as Watched[], companyAcc: "" };
     const u: any = currentUser;
     const ownerType = asOwnerType(u.role);
     const ownerId = (u.id || u.did) as string | undefined;
@@ -41,24 +41,49 @@ export default function LowBalanceWatcher() {
         ownerType === "admin"
           ? "Admin"
           : ownerType.charAt(0).toUpperCase() + ownerType.slice(1);
-      out.push({ id: accountId(ownerType, ownerId), label });
+      out.push({ id: CreditsApi.accountId(ownerType, ownerId), label });
     }
+    let compAcc = "";
     if (companyDid) {
-      out.push({ id: accountId("company", companyDid), label: "Azienda" });
+      compAcc = CreditsApi.accountId("company", companyDid);
+      out.push({ id: compAcc, label: "Azienda" });
     }
-    return dedupe(out);
+    return { watched: dedupe(out), companyAcc: compAcc };
   }, [currentUser]);
+
+  // soglie note per account (ad oggi impostiamo solo quella azienda)
+  const [thresholds, setThresholds] = React.useState<Record<string, number | undefined>>({});
 
   // stato precedente per evitare spam
   const prevLowRef = React.useRef<Record<string, boolean>>({});
 
+  // carica/aggiorna la soglia azienda se l'API la espone
+  const refreshThreshold = React.useCallback(async () => {
+    if (!companyAcc) return;
+    try {
+      const api: any = CreditsApi as any;
+      const cur = await api.getThreshold?.(companyAcc);
+      if (typeof cur === "number" && !Number.isNaN(cur)) {
+        setThresholds((m) => ({ ...m, [companyAcc]: cur }));
+      }
+    } catch {
+      // nessuna soglia disponibile → si usa il flag low della balance
+    }
+  }, [companyAcc]);
+
+  React.useEffect(() => {
+    refreshThreshold();
+  }, [refreshThreshold]);
+
   const check = React.useCallback(() => {
     if (!watched.length) return;
     const ids = watched.map((w) => w.id);
-    const balances = getBalances(ids); // [{id,balance,low}]
+    const balances = CreditsApi.getBalances(ids); // [{id,balance,low?}]
     for (const b of balances) {
+      const thr = thresholds[b.id];
+      const isLow = typeof thr === "number" ? Number(b.balance) <= thr : !!(b as any).low;
       const wasLow = !!prevLowRef.current[b.id];
-      const isLow = !!(b as any).low;
+
       if (!wasLow && isLow) {
         const label = watched.find((w) => w.id === b.id)?.label || "Account";
         toast({
@@ -69,13 +94,17 @@ export default function LowBalanceWatcher() {
       }
       prevLowRef.current[b.id] = isLow;
     }
-  }, [watched, toast]);
+  }, [watched, thresholds, toast]);
 
   React.useEffect(() => {
     check();
     const onStorage = (e: StorageEvent) => {
       if (!e.key) return;
-      if (e.key.startsWith("trustup:credits")) check();
+      if (e.key.startsWith("trustup:credits")) {
+        // ricalcola soglie e saldi al cambio storage
+        refreshThreshold();
+        check();
+      }
     };
     window.addEventListener("storage", onStorage);
     const id = window.setInterval(check, 2000);
@@ -83,7 +112,7 @@ export default function LowBalanceWatcher() {
       window.removeEventListener("storage", onStorage);
       window.clearInterval(id);
     };
-  }, [check]);
+  }, [check, refreshThreshold]);
 
   return null;
 }

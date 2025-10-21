@@ -1,5 +1,6 @@
 // src/pages/products/ProductCredentialTab.tsx
 import * as React from "react";
+import { Link } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -9,6 +10,7 @@ import { StandardsRegistry, type StandardId } from "@/config/standardsRegistry";
 import { useAuthStore } from "@/stores/authStore";
 import type { VC, VCStatus } from "@/types/vc";
 import { createProductVC, listVCs, revokeVC, supersedeVC, verifyIntegrity } from "@/services/api/vc";
+import { exportVC } from "@/services/standards/export";
 import VerifyFlag from "@/components/vc/VerifyFlag";
 import CopyJsonBox from "@/components/vc/CopyJsonBox";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -20,7 +22,7 @@ import {
   CommandGroup,
   CommandItem,
 } from "@/components/ui/command";
-import { ChevronsUpDown, Check, BadgeCheck, Ban, RefreshCcw, PlusCircle, FileJson } from "lucide-react";
+import { ChevronsUpDown, Check, BadgeCheck, Ban, RefreshCcw, PlusCircle, FileJson, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** Props:
@@ -115,16 +117,24 @@ export default function ProductCredentialTab({ productId, defaultGTIN = "", defa
     null
   );
 
+  const [integrityMap, setIntegrityMap] = React.useState<Record<string, boolean>>({});
+  const [verifyingId, setVerifyingId] = React.useState<string | null>(null);
+
   // VP selection
   const [selectedIds, setSelectedIds] = React.useState<Record<string, boolean>>({});
+
+  // filtro
+  const [onlyValid, setOnlyValid] = React.useState<boolean>(true);
 
   const standardLabel = StandardsRegistry[standard]?.title ?? standard;
 
   const tableRows = React.useMemo(() => {
-    return list
+    let rows = list
       .filter((v) => v.schemaId === standard && v.subjectId === productId)
       .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
-  }, [list, standard, productId]);
+    if (onlyValid) rows = rows.filter((v) => (v.status || "valid") === "valid");
+    return rows;
+  }, [list, standard, productId, onlyValid]);
 
   const currentVC = tableRows[0];
 
@@ -166,7 +176,6 @@ export default function ProductCredentialTab({ productId, defaultGTIN = "", defa
     if (!issuerDid) throw new Error("Issuer DID non disponibile");
     if (!productId) throw new Error("productId obbligatorio");
     if (!form.gtin) throw new Error("GTIN obbligatorio");
-    // JSON parse check
     parseJSONOptional(form.attributes);
     parseJSONOptional(form.testResults);
   }
@@ -244,13 +253,16 @@ export default function ProductCredentialTab({ productId, defaultGTIN = "", defa
     try {
       const target = v ?? currentVC;
       if (!target) throw new Error("Nessuna VC da verificare");
+      setVerifyingId(target.id);
       const res = await verifyIntegrity(target.id);
       setIntegrity(res);
       setPreview(target);
+      setIntegrityMap((m) => ({ ...m, [target.id]: !!res.valid }));
       setOkMsg(res.valid ? "Integrità: OK" : "Integrità: NON valida");
     } catch (e: any) {
       setErrorMsg(e?.message || "Errore verifica");
     } finally {
+      setVerifyingId(null);
       setBusy(false);
     }
   }
@@ -283,6 +295,9 @@ export default function ProductCredentialTab({ productId, defaultGTIN = "", defa
     a.click();
     URL.revokeObjectURL(url);
   }
+
+  const historyLinkForTx = (tx?: string) =>
+    tx ? `/company/credits/history?txRef=${encodeURIComponent(tx)}` : "#";
 
   return (
     <div className="space-y-6">
@@ -388,9 +403,16 @@ export default function ProductCredentialTab({ productId, defaultGTIN = "", defa
       <Card>
         <CardHeader>
           <CardTitle className="text-base">VC associate al prodotto</CardTitle>
-          <CardDescription>Seleziona VC da includere nella VP (mock).</CardDescription>
+          <CardDescription>Seleziona VC da includere nella VP (mock). Filtra e verifica on-demand.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
+          <div className="flex items-center gap-3 pb-2">
+            <div className="flex items-center gap-2">
+              <Checkbox id="only-valid" checked={onlyValid} onCheckedChange={(c) => setOnlyValid(!!c)} />
+              <Label htmlFor="only-valid">Solo valide</Label>
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -402,6 +424,8 @@ export default function ProductCredentialTab({ productId, defaultGTIN = "", defa
                   <th className="py-2 pr-2">Integrità</th>
                   <th className="py-2 pr-2">GTIN/Lot</th>
                   <th className="py-2 pr-2">Costo</th>
+                  <th className="py-2 pr-2">Payer</th>
+                  <th className="py-2 pr-2">Account</th>
                   <th className="py-2 pr-2">txRef</th>
                   <th className="py-2 pr-2"></th>
                 </tr>
@@ -410,8 +434,14 @@ export default function ProductCredentialTab({ productId, defaultGTIN = "", defa
                 {tableRows.map((v) => {
                   const st = (v.status || "valid") as VCStatus;
                   const d: any = (v as any).data || {};
-                  const billing = d.billing;
+                  const b: any = (v as any).billing || d.billing || {};
                   const checked = !!selectedIds[v.id];
+                  const integOk = integrityMap[v.id] ?? (v as any).__integrityOk ?? false;
+                  const cost = b.cost ?? b.amount;
+                  const payerType = b.payerType;
+                  const payerAccountId = b.payerAccountId ?? b.payerId;
+                  const txRef = b.txRef;
+
                   return (
                     <tr key={v.id} className="border-b hover:bg-muted/40">
                       <td className="py-2 pr-2">
@@ -423,25 +453,45 @@ export default function ProductCredentialTab({ productId, defaultGTIN = "", defa
                         {st === "valid" ? "✅ valid" : st === "revoked" ? "🛑 revoked" : st === "superseded" ? "↗ superseded" : st}
                       </td>
                       <td className="py-2 pr-2">
-                        <VerifyFlag valid={(v as any).__integrityOk ?? false} />
+                        <VerifyFlag valid={!!integOk} />
                       </td>
                       <td className="py-2 pr-2">
                         {(d.gtin || "—")}/{d.lot || "—"}
                       </td>
-                      <td className="py-2 pr-2">{billing?.amount != null ? `${billing.amount}` : "—"}</td>
-                      <td className="py-2 pr-2 font-mono text-xs">{billing?.txRef ?? "—"}</td>
+                      <td className="py-2 pr-2">{cost != null ? `${cost}` : "—"}</td>
+                      <td className="py-2 pr-2">{payerType ?? "—"}</td>
+                      <td className="py-2 pr-2 font-mono text-xs">{payerAccountId ?? "—"}</td>
+                      <td className="py-2 pr-2 font-mono text-xs">
+                        {txRef ? (
+                          <Link className="underline" to={historyLinkForTx(txRef)} title="Vedi in storico crediti">
+                            {txRef}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td className="py-2 pr-2">
-                        <Button size="sm" variant="secondary" onClick={() => handleVerify(v)}>
-                          <BadgeCheck className="h-4 w-4 mr-1" />
-                          Verifica
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="secondary" onClick={() => handleVerify(v)} disabled={verifyingId === v.id}>
+                            <BadgeCheck className="h-4 w-4 mr-1" />
+                            {verifyingId === v.id ? "Verifica…" : "Verifica"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => exportVC(v, `product_${productId}_${v.schemaId || "VC"}`)}
+                          >
+                            <Download className="h-4 w-4 mr-1" />
+                            Export VC
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
                 {tableRows.length === 0 && (
                   <tr>
-                    <td className="py-3 text-muted-foreground" colSpan={9}>
+                    <td className="py-3 text-muted-foreground" colSpan={11}>
                       Nessuna VC trovata per questo prodotto.
                     </td>
                   </tr>

@@ -8,16 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { useAuthStore } from "@/stores/authStore";
 import { useToast } from "@/components/ui/use-toast";
-import {
-  accountId,
-  getBalances,
-  transferBetween,
-  setThreshold,
-  ensureMemberAccount,
-  // bucket isole (usa API, non lo store)
-  getIslandBudget,
-  setIslandBudget,
-} from "@/services/api/credits";
+import * as CreditsApi from "@/services/api/credits";
 import type { AccountOwnerType } from "@/types/credit";
 import CreditsBadge from "@/components/credit/CreditsBadge";
 
@@ -75,7 +66,7 @@ export default function CompanyCreditsPage() {
   const { toast } = useToast();
 
   const companyDid = currentUser?.companyDid || currentUser?.did || "";
-  const companyAcc = companyDid ? accountId("company", companyDid) : "";
+  const companyAcc = companyDid ? CreditsApi.accountId("company", companyDid) : "";
 
   // soglia
   const [threshold, setThr] = React.useState<number>(10);
@@ -122,7 +113,7 @@ export default function CompanyCreditsPage() {
     try {
       const evts = listEvents({ companyDid });
       const ids = Array.from(new Set(evts.map((e: any) => e.islandId || e.data?.islandId).filter(Boolean) as string[]));
-      const rows = ids.map((id) => ({ id, budget: getIslandBudget(companyDid, id) }));
+      const rows = ids.map((id) => ({ id, budget: CreditsApi.getIslandBudget(companyDid, id) }));
       setIslands(rows);
       setIslandId(ids[0] || "");
     } catch {}
@@ -131,18 +122,32 @@ export default function CompanyCreditsPage() {
   // refresh bilanci per gli account correnti
   const refreshBalances = React.useCallback(() => {
     const ids: string[] = [companyAcc];
-    if (opDid)    ids.push(accountId("operator", opDid));
-    if (macDid)   ids.push(accountId("machine", macDid));
-    if (otherDid) ids.push(accountId(otherType, otherDid));
-    const list = getBalances(ids).reduce<Record<string, Bal>>((m, b) => { m[b.id] = b as Bal; return m; }, {});
+    if (opDid)    ids.push(CreditsApi.accountId("operator", opDid));
+    if (macDid)   ids.push(CreditsApi.accountId("machine", macDid));
+    if (otherDid) ids.push(CreditsApi.accountId(otherType, otherDid));
+    const list = CreditsApi.getBalances(ids).reduce<Record<string, Bal>>((m, b) => { m[b.id] = b as Bal; return m; }, {});
     setBalances(list);
   }, [companyAcc, opDid, macDid, otherDid, otherType]);
 
   React.useEffect(() => { if (companyAcc) refreshBalances(); }, [refreshBalances]);
 
+  // carica soglia attuale se l'API la espone
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (!companyAcc) return;
+      try {
+        const api: any = CreditsApi as any;
+        const cur = await api.getThreshold?.(companyAcc);
+        if (mounted && typeof cur === "number" && !Number.isNaN(cur)) setThr(cur);
+      } catch {}
+    })();
+    return () => { mounted = false; };
+  }, [companyAcc]);
+
   // helpers view
   const bal = (accId?: string) => (accId ? balances[accId]?.balance ?? 0 : 0);
-  const accStr = (t: AccountOwnerType, did: string) => (did ? accountId(t, did) : "");
+  const accStr = (t: AccountOwnerType, did: string) => (did ? CreditsApi.accountId(t, did) : "");
   const historyForAccount = (acc?: string) => (acc ? `/company/credits/history?account=${encodeURIComponent(acc)}` : "#");
   const historyForIsland  = (isl?: string) => (isl ? `/company/credits/history?islandId=${encodeURIComponent(isl)}` : "#");
 
@@ -151,7 +156,7 @@ export default function CompanyCreditsPage() {
     if (!companyAcc) return;
     setLoading(true);
     try {
-      setThreshold(companyAcc, Math.max(0, Math.floor(threshold)));
+      await CreditsApi.setThreshold(companyAcc, Math.max(0, Math.floor(threshold)));
       toast({ title: "Soglia azienda aggiornata" });
       refreshBalances();
     } catch (e: any) {
@@ -163,8 +168,8 @@ export default function CompanyCreditsPage() {
     if (!companyAcc || !did || amount <= 0) return;
     setLoading(true);
     try {
-      await ensureMemberAccount(t, did, 0);
-      transferBetween(companyAcc, accountId(t, did), Math.floor(amount), { reason });
+      await CreditsApi.ensureMemberAccount(t, did, 0);
+      await CreditsApi.transferBetween(companyAcc, CreditsApi.accountId(t, did), Math.floor(amount), { reason });
       toast({ title: "Trasferimento effettuato" });
       refreshBalances();
     } catch (e: any) {
@@ -175,9 +180,9 @@ export default function CompanyCreditsPage() {
   async function topupIsland() {
     if (!companyDid || !islandId || amtIsl <= 0) return;
     try {
-      const cur = getIslandBudget(companyDid, islandId);
+      const cur = CreditsApi.getIslandBudget(companyDid, islandId);
       const next = Math.max(0, cur + Math.floor(amtIsl));
-      setIslandBudget(companyDid, islandId, next);
+      CreditsApi.setIslandBudget(companyDid, islandId, next);
       toast({ title: "Bucket isola ricaricato", description: `${islandId} → ${next}` });
       setIslands((rows) => rows.map(r => r.id === islandId ? ({ ...r, budget: next }) : r));
     } catch (e: any) {
@@ -239,7 +244,18 @@ export default function CompanyCreditsPage() {
             <div className="grid gap-3 sm:grid-cols-3">
               <div>
                 <Label>Soglia low-balance</Label>
-                <Input type="number" min={0} value={threshold} onChange={(e) => setThr(Number(e.target.value))} />
+                <Input
+                  type="number"
+                  min={0}
+                  value={threshold}
+                  onChange={(e) => setThr(Number(e.target.value))}
+                  aria-label="Soglia low-balance azienda"
+                />
+                <div className="mt-1 flex gap-2">
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setThr(5)}>5</Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setThr(10)}>10</Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setThr(25)}>25</Button>
+                </div>
               </div>
               <div className="grid content-end">
                 <Button variant="outline" onClick={handleThresholdCompany} disabled={!companyAcc || loading}>
@@ -362,7 +378,7 @@ export default function CompanyCreditsPage() {
                 </SelectContent>
               </Select>
               <div className="text-xs text-muted-foreground">
-                Budget attuale: <span className="font-mono">{islandId ? getIslandBudget(companyDid, islandId) : 0}</span>
+                Budget attuale: <span className="font-mono">{islandId ? CreditsApi.getIslandBudget(companyDid, islandId) : 0}</span>
               </div>
               <div className="grid grid-cols-[1fr_auto_auto] gap-2">
                 <Input type="number" min={1} value={amtIsl} onChange={(e) => setAmtIsl(Number(e.target.value))} aria-label="Importo isola" />
