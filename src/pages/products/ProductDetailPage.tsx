@@ -74,6 +74,12 @@ export default function ProductDetailPage() {
   const [verifyingId, setVerifyingId] = React.useState<string | null>(null);
   const [onlyValid, setOnlyValid] = React.useState<boolean>(true);
 
+  // MUST stay before any early return
+  const displayVCs = React.useMemo(() => {
+    if (!onlyValid) return vcs;
+    return (vcs || []).filter((vc) => !vc.revokedAt && !vc.supersededBy);
+  }, [vcs, onlyValid]);
+
   React.useEffect(() => {
     let mounted = true;
 
@@ -117,7 +123,7 @@ export default function ProductDetailPage() {
       if (!id) return;
       setVcsLoading(true);
       try {
-        // Prefer API filter; fallback a filtro client.
+        // Prefer API filter; fallback client.
         let res: AnyVC[] = [];
         try {
           // @ts-ignore
@@ -273,11 +279,6 @@ export default function ProductDetailPage() {
 
   const historyForTx = (tx?: string) =>
     tx ? `/company/credits/history?txRef=${encodeURIComponent(tx)}` : "#";
-
-  const displayVCs = React.useMemo(() => {
-    if (!onlyValid) return vcs;
-    return (vcs || []).filter((vc) => !vc.revokedAt && !vc.supersededBy);
-  }, [vcs, onlyValid]);
 
   return (
     <div className="space-y-6">

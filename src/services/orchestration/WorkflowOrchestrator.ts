@@ -16,7 +16,8 @@ import { SnapshotStorage } from "@/services/storage/SnapshotStorage";
 import { listVCs } from "@/services/api/vc";
 import type { VC, VCStatus } from "@/types/vc";
 
-// Tipi input: map VC org e prodotto come da credentialStore
+/* ============================== Tipi ============================== */
+
 export type OrgVCMap = Partial<Record<StandardId, VerifiableCredential<any>>>;
 export type ProdVCMap = Partial<Record<StandardId, VerifiableCredential<any>>>;
 
@@ -27,6 +28,8 @@ export type PrepareVPResult =
 export type PublishResult =
   | { ok: true; snapshotId: string; vp: VerifiablePresentation }
   | { ok: false; message: string };
+
+/* ============================ Helpers ============================ */
 
 function collectCreds(org: OrgVCMap, prod: ProdVCMap): VerifiableCredential[] {
   const res: VerifiableCredential[] = [];
@@ -50,104 +53,113 @@ function productIdFromLocation(): string | null {
   return m?.[1] ? decodeURIComponent(m[1]) : null;
 }
 
-// Adattatore VC(new API) -> VerifiableCredential(domain)
 function adaptVC(v: VC): VerifiableCredential<any> {
+  const schemaName = (v as any).schemaId ?? (v as any).standardId ?? "VC";
   return {
     "@context": ["https://www.w3.org/2018/credentials/v1"],
-    type: ["VerifiableCredential", `Adapted${v.schemaId}`],
-    issuer: v.issuerDid,
-    issuanceDate: v.createdAt ?? new Date().toISOString(),
+    type: ["VerifiableCredential", `Adapted${schemaName}`],
+    issuer: (v as any).issuerDid ?? (v as any).issuer ?? "did:unknown",
+    issuanceDate: (v as any).createdAt ?? new Date().toISOString(),
     credentialSubject: { ...(v as any).data },
     proof: {
       type: "DataIntegrityProof",
-      created: v.updatedAt ?? v.createdAt ?? new Date().toISOString(),
+      created: (v as any).updatedAt ?? (v as any).createdAt ?? new Date().toISOString(),
       proofPurpose: "assertionMethod",
-      verificationMethod: `${v.issuerDid}#key-1`,
-      proofValue: (v.proof as any)?.jws ?? "",
+      verificationMethod: `${(v as any).issuerDid ?? "did:unknown"}#key-1`,
+      proofValue: (v as any)?.proof?.jws ?? "",
     } as any,
   };
 }
 
-// Tipo elemento mancanza, senza vincoli readonly
 type MissingItem = ComplianceReport["missing"] extends ReadonlyArray<infer T> ? T : never;
 
-// Report fallback: almeno 1 OrgVC valida + 1 ProductVC valida
 function fallbackReport(orgNum: number, prodNum: number, pid: string): ComplianceReport {
-  const missing: any[] = []; // uso any per includere 'reason' senza violare il tipo
+  const missing: any[] = [];
   if (orgNum === 0)
-    missing.push({
-      scope: "organization",
-      standard: "ISO",
-      reason: "Nessuna VC organizzativa valida",
-    });
+    missing.push({ scope: "organization", standard: "ISO", reason: "Nessuna VC organizzativa valida" });
   if (prodNum === 0)
-    missing.push({
-      scope: "product",
-      standard: "GS1",
-      reason: `Nessuna VC di prodotto valida per ${pid}`,
-    });
-  // cast a ComplianceReport: i campi extra non rompono il consumer
+    missing.push({ scope: "product", standard: "GS1", reason: `Nessuna VC di prodotto valida per ${pid}` });
   return { ok: missing.length === 0, missing: missing as unknown as MissingItem[] } as ComplianceReport;
 }
 
+async function collectFromNewApi(productId: string) {
+  const [org, prod] = await Promise.all([
+    listVCs({ subjectType: "organization", status: "valid" as VCStatus }),
+    listVCs({ subjectType: "product", subjectId: productId, status: "valid" as VCStatus }),
+  ]);
+  return { org, prod };
+}
+
+/* ============================ Orchestratore ============================ */
+
 export const WorkflowOrchestrator = {
-  /** Gate di compliance. Se ok, crea VP non firmata con tutte le VC valide. */
   async prepareVP(
     orgVC: OrgVCMap,
     prodVC: ProdVCMap,
     opts?: ComplianceOptions
   ): Promise<PrepareVPResult> {
-    // 1) Percorso originale "domain/*"
     if (hasDomainVC(orgVC, prodVC)) {
       const report = await evaluateCompliance(orgVC, prodVC, opts);
-      if (!report.ok) {
-        return { ok: false, report, message: "Compliance incompleta: mancano credenziali o campi richiesti" };
-      }
+      if (!report.ok) return { ok: false, report, message: "Compliance incompleta: mancano credenziali o campi richiesti" };
       const creds = collectCreds(orgVC, prodVC);
       const allVcValid = await verifyAllVC(creds);
-      if (!allVcValid) {
-        return { ok: false, report, message: "Alcune VC non superano la verifica proof" };
-      }
+      if (!allVcValid) return { ok: false, report, message: "Alcune VC non superano la verifica proof" };
       const vp = composeVP(creds);
       return { ok: true, vp, included: creds.length, report };
     }
 
-    // 2) Fallback nuovo services/api/vc
     const pid = productIdFromLocation();
     if (!pid) {
       const report = fallbackReport(0, 0, "unknown");
       return { ok: false, report, message: "productId non rilevato dall'URL" };
     }
 
-    const [org, prod] = await Promise.all([
-      listVCs({ subjectType: "organization", status: "valid" as VCStatus }),
-      listVCs({ subjectType: "product", subjectId: pid, status: "valid" as VCStatus }),
-    ]);
-
+    const { org, prod } = await collectFromNewApi(pid);
     const report = fallbackReport(org.length, prod.length, pid);
     const adapted: VerifiableCredential[] = [...org, ...prod].map(adaptVC);
     const vp = composeVP(adapted);
 
-    if (!report.ok) {
-      // unione stretta: nel ramo false serve anche message
-      return { ok: false, report, message: "Compliance incompleta nelle VC del nuovo storage" };
-    }
+    if (!report.ok) return { ok: false, report, message: "Compliance incompleta nelle VC del nuovo storage" };
     return { ok: true, vp, included: adapted.length, report };
   },
 
-  /** Firma la VP e registra snapshot persistente su localStorage. */
   async publishVP(vp: VerifiablePresentation): Promise<PublishResult> {
     const signed = await signVPAsync(vp);
     const ok = (await verifyVP(signed)).valid;
     if (!ok) return { ok: false, message: "Impossibile verificare la VP firmata" };
-
     const { id } = SnapshotStorage.save(signed);
     return { ok: true, snapshotId: id, vp: signed };
   },
 
-  /** Recupera VP dallo snapshot pubblicato. */
   getSnapshot(id: string): VerifiablePresentation | undefined {
     const rec = SnapshotStorage.get<VerifiablePresentation>(id);
     return rec?.vp;
   },
+
+  async generateAndPublishVP(productId: string): Promise<PublishResult> {
+    const { org, prod } = await collectFromNewApi(productId);
+    const report = fallbackReport(org.length, prod.length, productId);
+    const adapted: VerifiableCredential[] = [...org, ...prod].map(adaptVC);
+    if (!report.ok) return { ok: false, message: "Compliance incompleta nelle VC del nuovo storage" };
+    const vp = composeVP(adapted);
+    return await this.publishVP(vp);
+  },
+
+  async publishForProduct(productId: string) {
+    return this.generateAndPublishVP(productId);
+  },
+  async generateAndPublish(productId: string) {
+    return this.generateAndPublishVP(productId);
+  },
 };
+
+/* ======================= Named exports compat ======================= */
+
+export async function generateAndPublishVP(productId: string): Promise<PublishResult> {
+  return WorkflowOrchestrator.generateAndPublishVP(productId);
+}
+export const publishForProduct = WorkflowOrchestrator.publishForProduct;
+export const generateAndPublish = WorkflowOrchestrator.generateAndPublish;
+
+/* ============================== Default ============================== */
+export default WorkflowOrchestrator;

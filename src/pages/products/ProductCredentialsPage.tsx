@@ -19,6 +19,7 @@ import { notifyError, notifySuccess } from "@/stores/uiStore";
 import Form from "@rjsf/core";
 import type { IChangeEvent } from "@rjsf/core";
 import validatorAjv8 from "@rjsf/validator-ajv8";
+import ProductTopBar from "@/components/products/ProductTopBar";
 
 type Schema = Record<string, any>;
 type ProductStandard = Extract<StandardId, "GS1" | "EU_DPP_TEXTILE" | "EU_DPP_ELECTRONICS">;
@@ -27,10 +28,8 @@ const PRODUCT_STANDARDS: readonly ProductStandard[] = ["GS1", "EU_DPP_TEXTILE", 
 export default function ProductCredentialsPage() {
   const { id: productId } = useParams<{ id: string }>();
   const location = useLocation();
-  const isCompany = location.pathname.startsWith("/company/");
-  const backTo = productId
-    ? `${isCompany ? "/company" : "/creator"}/products/${productId}/attributes`
-    : `${isCompany ? "/company" : "/creator"}/products`;
+  const roleBase = location.pathname.startsWith("/company") ? "/company" : "/creator";
+  const basePath = `${roleBase}/products`;
 
   const { currentUser } = useAuthStore();
   const issuerDid = currentUser?.companyDid || currentUser?.did || "";
@@ -159,7 +158,7 @@ export default function ProductCredentialsPage() {
           <CardDescription>Route senza parametro :id.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button asChild variant="outline"><Link to={backTo}>Indietro</Link></Button>
+          <Button asChild variant="outline"><Link to={basePath}>Indietro</Link></Button>
         </CardContent>
       </Card>
     );
@@ -167,6 +166,21 @@ export default function ProductCredentialsPage() {
 
   return (
     <div className="space-y-6">
+      {/* Top bar prodotto */}
+      <ProductTopBar roleBase={roleBase} productId={productId} />
+
+      {/* Breadcrumb + back */}
+      <div className="flex items-center justify-between">
+        <nav className="text-sm text-muted-foreground">
+          <Link to={basePath} className="hover:underline">Prodotti</Link>
+          <span className="mx-1">/</span>
+          <span className="text-foreground">Credenziali</span>
+        </nav>
+        <Button asChild variant="ghost" size="sm">
+          <Link to={`${roleBase}/products/${productId}`}>Indietro</Link>
+        </Button>
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Credenziali prodotto</CardTitle>
@@ -201,7 +215,7 @@ export default function ProductCredentialsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button asChild variant="outline" disabled={busy}><Link to={backTo}>Indietro</Link></Button>
+            <Button asChild variant="outline" disabled={busy}><Link to={`${roleBase}/products/${productId}`}>Indietro</Link></Button>
             <Button variant="secondary" onClick={onVerifyExisting} disabled={busy || !existingVC}>Verifica VC esistente</Button>
             <div className="ml-auto text-xs text-muted-foreground">
               Costo azione: <span className="font-mono">{vcCost}</span> crediti

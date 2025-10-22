@@ -18,56 +18,65 @@ import {
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { ChevronRight } from "lucide-react";
 
-type NavItem = { to: string; label: string; children?: NavItem[] };
+function usePath() {
+  const { pathname } = useLocation();
+  const starts = (to: string) => pathname.startsWith(to);
+  const exact = (to: string) => pathname === to;
+  return { starts, exact };
+}
 
-const NAV: Record<string, NavItem[]> = {
-  admin: [
-    { to: "/admin", label: "Dashboard" },
-    { to: "/admin/credits", label: "Crediti" },
-    { to: "/admin/credits/history", label: "Storico crediti" },
-  ],
-  company: [
-    { to: "/company", label: "Dashboard" },
-    { to: "/company/products", label: "Prodotti" },
-    { to: "/company/events", label: "Eventi" }, // nessun sottomenu per ora
-    { to: "/company/org", label: "Organizzazione" },
-    { to: "/company/attributes", label: "Attributi azienda" },
-    { to: "/company/compliance", label: "Compliance" },
-    { to: "/company/credentials", label: "Credenziali org" },
-    { to: "/company/credits", label: "Crediti" },
-    { to: "/company/credits/history", label: "Storico crediti" },
-  ],
-  creator: [
-    { to: "/creator", label: "Dashboard" },
-    { to: "/creator/products", label: "Prodotti" },
-    {
-      to: "/creator/events",
-      label: "Eventi",
-      children: [
-        { to: "/creator/events", label: "KPI" },
-        { to: "/creator/events/create", label: "Registra evento" },
-        { to: "/creator/events/timeline", label: "Timeline" },
-      ],
-    },
-    { to: "/creator/attributes", label: "Catalogo attributi" },
-    {
-      to: "/creator/credits",
-      label: "Crediti",
-      children: [{ to: "/creator/credits/history", label: "Storico crediti" }],
-    },
-  ],
-  operator: [{ to: "/operator", label: "Dashboard" }],
-  machine: [{ to: "/machine", label: "Dashboard" }],
-};
+function roleBaseOf(role?: string) {
+  if (role === "company") return "/company";
+  if (role === "creator") return "/creator";
+  if (role === "admin") return "/admin";
+  if (role === "operator") return "/operator";
+  if (role === "machine") return "/machine";
+  return "/creator";
+}
 
 export default function Sidebar() {
   const { currentUser } = useAuth();
-  const { pathname } = useLocation();
   const role = currentUser?.role ?? "creator";
-  const items = NAV[role] ?? [];
+  const base = roleBaseOf(role);
+  const { starts, exact } = usePath();
 
-  const isExact = (to: string) => pathname === to;
-  const isGroupActive = (it: NavItem) => isExact(it.to) || (it.children ?? []).some((c) => isExact(c.to));
+  // Admin/operator/machine: menu minimale
+  if (role === "admin" || role === "operator" || role === "machine") {
+    return (
+      <UISidebar>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={exact(base)}>
+                    <NavLink to={base} end><span>Dashboard</span></NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                {role === "admin" && (
+                  <>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={starts(`${base}/credits`)}>
+                        <NavLink to={`${base}/credits`}>Crediti</NavLink>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={exact(`${base}/credits/history`)}>
+                        <NavLink to={`${base}/credits/history`}>Storico crediti</NavLink>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </>
+                )}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarRail />
+      </UISidebar>
+    );
+  }
+
+  const productsBase = `${base}/products`;
 
   return (
     <UISidebar>
@@ -75,52 +84,119 @@ export default function Sidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((i) => {
-                const hasChildren = !!i.children?.length;
+              {/* Dashboard */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={exact(base)}>
+                  <NavLink to={base} end><span>Dashboard</span></NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
-                if (!hasChildren) {
-                  return (
-                    <SidebarMenuItem key={i.to}>
-                      <SidebarMenuButton asChild isActive={isExact(i.to)}>
-                        <NavLink to={i.to} end>
-                          <span>{i.label}</span>
-                        </NavLink>
+              {/* Prodotti: solo funzioni globali */}
+              <Collapsible defaultOpen={starts(productsBase)} className="group/collapsible">
+                <SidebarMenuItem>
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuButton isActive={starts(productsBase)}>
+                      <span>Prodotti</span>
+                      <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                    </SidebarMenuButton>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <SidebarMenuSub>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={exact(`${productsBase}/new`)}>
+                          <NavLink to={`${productsBase}/new`}><span>Crea nuovo prodotto</span></NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={exact(productsBase)}>
+                          <NavLink to={productsBase} end><span>Tutti i prodotti</span></NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={starts(`${productsBase}/credentials`)}>
+                          <NavLink to={`${productsBase}/credentials`}><span>Credenziali</span></NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={exact(`${productsBase}/dpp`)}>
+                          <NavLink to={`${productsBase}/dpp`}><span>DPP Viewer</span></NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    </SidebarMenuSub>
+                  </CollapsibleContent>
+                </SidebarMenuItem>
+              </Collapsible>
+
+              {/* Organizzazione solo company */}
+              {role === "company" && (
+                <Collapsible
+                  defaultOpen={
+                    starts(`${base}/attributes`) || starts(`${base}/compliance`) || starts(`${base}/credentials`)
+                  }
+                  className="group/collapsible"
+                >
+                  <SidebarMenuItem>
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuButton
+                        isActive={
+                          starts(`${base}/attributes`) || starts(`${base}/compliance`) || starts(`${base}/credentials`)
+                        }
+                      >
+                        <span>Organizzazione</span>
+                        <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
                       </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                }
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <SidebarMenuSub>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton asChild isActive={starts(`${base}/attributes`)}>
+                            <NavLink to={`${base}/attributes`}><span>Attributi azienda</span></NavLink>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton asChild isActive={starts(`${base}/compliance`)}>
+                            <NavLink to={`${base}/compliance`}><span>Compliance</span></NavLink>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton asChild isActive={starts(`${base}/credentials`)}>
+                            <NavLink to={`${base}/credentials`}><span>Credenziali org</span></NavLink>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </SidebarMenuItem>
+                </Collapsible>
+              )}
 
-                return (
-                  <Collapsible
-                    key={i.to}
-                    defaultOpen={isGroupActive(i)}
-                    className="group/collapsible"
-                  >
-                    <SidebarMenuItem>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuButton>
-                          <span>{i.label}</span>
-                          <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
-                        </SidebarMenuButton>
-                      </CollapsibleTrigger>
-
-                      <CollapsibleContent>
-                        <SidebarMenuSub>
-                          {i.children!.map((c) => (
-                            <SidebarMenuSubItem key={c.to}>
-                              <SidebarMenuSubButton asChild isActive={isExact(c.to)}>
-                                <NavLink to={c.to} end>
-                                  <span>{c.label}</span>
-                                </NavLink>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </SidebarMenuSub>
-                      </CollapsibleContent>
-                    </SidebarMenuItem>
-                  </Collapsible>
-                );
-              })}
+              {/* Crediti */}
+              <Collapsible defaultOpen={starts(`${base}/credits`)} className="group/collapsible">
+                <SidebarMenuItem>
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuButton isActive={starts(`${base}/credits`)}>
+                      <span>Crediti</span>
+                      <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                    </SidebarMenuButton>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <SidebarMenuSub>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={exact(`${base}/credits`)}>
+                          <NavLink to={`${base}/credits`} end><span>Saldo</span></NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={exact(`${base}/credits/history`)}>
+                          <NavLink to={`${base}/credits/history`}><span>Storico crediti</span></NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    </SidebarMenuSub>
+                  </CollapsibleContent>
+                </SidebarMenuItem>
+              </Collapsible>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
