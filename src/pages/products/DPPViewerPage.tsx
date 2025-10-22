@@ -24,6 +24,27 @@ function isErr<T extends { ok: boolean }>(r: T): r is T & { ok: false; reason?: 
   return r.ok === false;
 }
 
+/* -------------------- Helpers VP → compliance -------------------- */
+
+type TrustupCompliance = {
+  productComplianceStandard?: string;
+  productComplianceAttrs?: Record<string, unknown>;
+  productId?: string;
+};
+
+function extractCompliance(vp?: VerifiablePresentation | null): TrustupCompliance | null {
+  if (!vp) return null;
+  const t: any = (vp as any).trustup;
+  if (!t || typeof t !== "object") return null;
+  const attrs = t.productComplianceAttrs;
+  if (!attrs || typeof attrs !== "object") return null;
+  return {
+    productComplianceStandard: t.productComplianceStandard ?? "COMPANY_PROFILE",
+    productComplianceAttrs: attrs as Record<string, unknown>,
+    productId: t.productId as string | undefined,
+  };
+}
+
 export default function DPPViewerPage() {
   const { id: productId, dppId: routeDppId } = useParams<{ id?: string; dppId?: string }>();
   const navigate = useNavigate();
@@ -187,6 +208,21 @@ export default function DPPViewerPage() {
     );
   }
 
+  function renderComplianceBlock(vp: VerifiablePresentation | null) {
+    const comp = extractCompliance(vp);
+    if (!comp?.productComplianceAttrs) return null;
+    return (
+      <div className="space-y-1">
+        <div className="text-sm font-medium">
+          Attributi di compliance inclusi ({comp.productComplianceStandard ?? "COMPANY_PROFILE"})
+        </div>
+        <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
+{JSON.stringify(comp.productComplianceAttrs, null, 2)}
+        </pre>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {productId && <ProductTopBar roleBase={roleBase} productId={productId} />}
@@ -227,6 +263,7 @@ export default function DPPViewerPage() {
                   <b>Published:</b> {new Date(snapshot.publishedAt).toLocaleString()}
                 </div>
               </div>
+              {renderComplianceBlock(snapshot.content)}
               <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
 {JSON.stringify(snapshot.content, null, 2)}
               </pre>
@@ -241,6 +278,7 @@ export default function DPPViewerPage() {
                   <div className="text-sm">
                     <b>VP pronta</b> — credenziali incluse: <span className="font-mono">{includedCount}</span>
                   </div>
+                  {renderComplianceBlock(vpPreview)}
                   <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
 {JSON.stringify(vpPreview, null, 2)}
                   </pre>

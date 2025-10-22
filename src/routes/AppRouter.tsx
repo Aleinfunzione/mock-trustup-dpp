@@ -21,6 +21,7 @@ import OrganizationCredentialPage from "@/pages/company/OrganizationCredentialPa
 import CompanyCreditsPage from "@/pages/company/CompanyCreditsPage";
 import CompanyOrganizationPage from "@/pages/company/CompanyOrganizationPage";
 import CreditsHistoryPage from "@/pages/company/CreditsHistoryPage";
+import CreateProductPanel from "@/pages/company/CreateProductPanel"; // ⬅️ NEW
 
 // Admin
 import AdminCreditsPage from "@/pages/admin/AdminCreditsPage";
@@ -41,6 +42,7 @@ import ProductAttributesPage from "@/pages/products/ProductAttributesPage";
 import ProductCredentialsPage from "@/pages/products/ProductCredentialsPage";
 import ProductEventsPage from "@/pages/products/ProductEventsPage";
 import DPPViewerPage from "@/pages/products/DPPViewerPage";
+import ProductCreatePage from "@/pages/products/ProductCreatePage";
 
 // Indici globali prodotti
 import DPPIndexPage from "@/pages/products/DPPIndexPage";
@@ -173,16 +175,14 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* NEW: crea nuovo prodotto riusando la vista creator */}
           <Route
             path="/company/products/new"
             element={
               <RequireRole role="company">
-                <CreatorProductsPage />
+                <CreateProductPanel /> {/* ⬅️ usa il pannello Azienda */}
               </RequireRole>
             }
           />
-          {/* Indici globali */}
           <Route
             path="/company/products/credentials"
             element={
@@ -199,7 +199,6 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          {/* Dettaglio + sottopagine */}
           <Route
             path="/company/products/:id"
             element={
@@ -234,6 +233,14 @@ export default function AppRouter() {
           />
           <Route
             path="/company/products/:id/dpp"
+            element={
+              <RequireRole role="company">
+                <DPPViewerPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/company/products/:id/dpp/:dppId"
             element={
               <RequireRole role="company">
                 <DPPViewerPage />
@@ -296,7 +303,7 @@ export default function AppRouter() {
             path="/creator/products/new"
             element={
               <RequireRole role="creator">
-                <CreatorProductsPage />
+                <ProductCreatePage />
               </RequireRole>
             }
           />
@@ -350,6 +357,14 @@ export default function AppRouter() {
           />
           <Route
             path="/creator/products/:id/dpp"
+            element={
+              <RequireRole role="creator">
+                <DPPViewerPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/creator/products/:id/dpp/:dppId"
             element={
               <RequireRole role="creator">
                 <DPPViewerPage />

@@ -164,10 +164,20 @@ export default function ProductCredentialsPage() {
     );
   }
 
+  // link rapidi coerenti con la subnav del dettaglio
+  const dppHref = `${roleBase}/products/${productId}/dpp`;
+  const bomHref = `${roleBase}/products/${productId}#bom`;
+
   return (
     <div className="space-y-6">
       {/* Top bar prodotto */}
       <ProductTopBar roleBase={roleBase} productId={productId} />
+
+      {/* Quick links aggiuntivi per coerenza submenu */}
+      <div className="flex flex-wrap gap-2">
+        <Button asChild size="sm" variant="outline"><Link to={dppHref}>DPP Viewer</Link></Button>
+        <Button asChild size="sm" variant="outline"><Link to={bomHref}>BOM</Link></Button>
+      </div>
 
       {/* Breadcrumb + back */}
       <div className="flex items-center justify-between">

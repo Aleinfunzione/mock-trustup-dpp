@@ -1,5 +1,8 @@
 export type ProductId = string;
 
+/** Valore ammesso per gli attributi di compliance */
+export type ComplianceValue = string | number | boolean | null | undefined;
+
 /** Nodo BOM (mock) */
 export interface BomNode {
   /** id univoco del nodo (uuid o random) */
@@ -26,6 +29,9 @@ export interface Product {
   typeId: string;
   /** attributi validati tramite JSON Schema (AJV) */
   attributes: Record<string, any>;
+
+  /** attributi di compliance assegnati da CompanyAttributes.compliance */
+  complianceAttrs?: Record<string, ComplianceValue>;
 
   /** distinta base multilivello */
   bom: BomNode[];

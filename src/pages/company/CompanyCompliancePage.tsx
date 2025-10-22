@@ -84,7 +84,11 @@ export default function CompanyCompliancePage() {
         <CardHeader>
           <CardTitle>Compliance aziendale</CardTitle>
           <CardDescription>
-            Stato delle credenziali d’organizzazione richieste e loro validità.
+            Stato delle credenziali d’organizzazione richieste e loro validità.{" "}
+            <span className="text-muted-foreground">
+              Le VC sono <b>complementari</b> agli <i>attributi di compliance prodotto</i> definiti in Company → Attributi
+              azienda: le VC attestano, gli attributi compilano i dati di prodotto e vengono inclusi nella VP.
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -165,6 +169,11 @@ export default function CompanyCompliancePage() {
           <p>
             Le VP di prodotto passano il gate solo se le VC di organizzazione richieste risultano presenti e
             verificate.
+          </p>
+          <p>
+            Gli <i>attributi di compliance prodotto</i> sono definiti dall’azienda e compilati a livello di prodotto.
+            Non sostituiscono le VC: sono dati operativi che vengono <b>inclusi nella VP</b> e validati come “required”
+            rispetto alle definizioni aziendali.
           </p>
           <p>
             Dopo aver aggiunto le VC, apri il prodotto → <span className="font-medium">Credenziali</span> per emettere

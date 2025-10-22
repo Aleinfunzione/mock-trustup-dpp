@@ -38,6 +38,8 @@ type EventFormProps = {
   assignedToDid?: string;
   onCreated?: (eventId: string) => void;
   compact?: boolean;
+  /** Pre-seleziona un nodo BOM e imposta l'ambito su "bom" */
+  bomNodeId?: string;
 };
 
 type Scope = "product" | "bom";
@@ -129,6 +131,7 @@ export default function EventForm({
   assignedToDid,
   onCreated,
   compact,
+  bomNodeId,
 }: EventFormProps) {
   const { toast } = useToast();
   const { currentUser } = useAuthStore();
@@ -171,6 +174,14 @@ export default function EventForm({
     if (defaultProductId) setProductId(defaultProductId);
   }, [defaultProductId]);
 
+  // pre-selezione da prop bomNodeId
+  useEffect(() => {
+    if (bomNodeId) {
+      setScope("bom");
+      setTargetNodeId(bomNodeId);
+    }
+  }, [bomNodeId]);
+
   useEffect(() => {
     const load = async () => {
       let list: Product[] = [];
@@ -201,8 +212,16 @@ export default function EventForm({
     const opts = flattenBOM(bom);
     setBomOptions(opts);
     setProductIslandId((prod as any)?.islandId);
-    if (targetNodeId && !opts.find((o) => o.id === targetNodeId)) setTargetNodeId("");
-  }, [productId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // riallinea selezione nodo
+    const propNode = bomNodeId && opts.some((o) => o.id === bomNodeId) ? bomNodeId : undefined;
+    if (propNode) {
+      setScope("bom");
+      setTargetNodeId(propNode);
+    } else if (targetNodeId && !opts.find((o) => o.id === targetNodeId)) {
+      setTargetNodeId("");
+    }
+  }, [productId, bomNodeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Isole
   useEffect(() => {
@@ -626,7 +645,6 @@ export default function EventForm({
                   value={targetKind}
                   onValueChange={(v: TargetKind) => {
                     setTargetKind(v);
-                    // reset campi dell’altro target per evitare submit bloccato
                     if (v === "member") setIslandId("");
                     else setAssignee("");
                   }}
@@ -737,7 +755,7 @@ export default function EventForm({
 function flattenBOM(nodes: BomNode[], path: string[] = [], depth = 0): BomOption[] {
   const out: BomOption[] = [];
   for (const n of nodes ?? []) {
-    const labelBase = (n as any).placeholderName?.trim?.() || (n as any).componentRef || n.id;
+    const labelBase = (n as any).placeholderName?.trim?.() || (n as any).name || (n as any).componentRef || n.id;
     const indent = "—".repeat(Math.min(depth, 6));
     const label = (indent ? `${indent} ` : "") + labelBase + (n.children?.length ? " (gruppo)" : "");
     const thisPath = [...path, n.id];

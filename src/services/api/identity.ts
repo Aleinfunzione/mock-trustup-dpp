@@ -19,7 +19,13 @@ import {
 export type Island = { id: string; name: string; companyDid: string; group?: string };
 export type MemberIsland = { did: string; islandId?: string; group?: string };
 
-/** Shape “profilo pubblico” richiesto dalla UI */
+export type Team = {
+  id: string;
+  name: string;
+  companyDid: string;
+  memberDids: string[];
+};
+
 export type PublicMember = {
   did: string;
   role: Role;
@@ -29,15 +35,15 @@ export type PublicMember = {
   email?: string;
   companyDid?: string;
   username?: string;
-  /** mapping isola/gruppo per filtri UI */
   islandId?: string;
   group?: string;
 };
 
-/* ---------- storage keys locali per isole/mapping (no nuovi file) ---------- */
+/* ---------- storage keys locali ---------- */
 
 const KEY_ISLANDS = "identity.islands";
 const KEY_MEMBER_ISLANDS = "identity.memberIslands";
+const KEY_TEAMS = "identity.teams";
 
 /* ---------- helpers ---------- */
 
@@ -61,7 +67,6 @@ function randomHex(bytes = 8): string {
   } catch {
     /* noop */
   }
-  // Fallback non-crittografico
   return Array.from({ length: bytes }, () => toHex(Math.floor(Math.random() * 256))).join("");
 }
 
@@ -71,41 +76,17 @@ function isCompanyAssignableRole(
   return role === "creator" || role === "operator" || role === "machine";
 }
 
-/** Deriva un display name semplice da username/did */
 function toDisplayName(r: Pick<IdentityRecord, "did" | "username">): string {
   if (r.username && r.username.trim()) return r.username.trim();
   const short = r.did?.slice(-8) ?? "user";
   return `user-${short}`;
 }
 
-/** Prova a splittare nome e cognome dal username */
 function splitName(username?: string): { firstName?: string; lastName?: string } {
   if (!username) return {};
   const parts = username.trim().split(/\s+/);
   if (parts.length >= 2) return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
   return { firstName: username };
-}
-
-/** Costruisce il profilo pubblico richiesto dalla UI (merge con mapping isola) */
-function toPublicMember(r: IdentityRecord): PublicMember {
-  const displayName = toDisplayName(r);
-  const { firstName, lastName } = splitName(r.username);
-  const email =
-    (r as any).email ??
-    (r.username ? `${r.username.replace(/\s+/g, ".").toLowerCase()}@mock.local` : undefined);
-  const map = getMemberIsland(r.did);
-  return {
-    did: r.did,
-    role: r.role,
-    firstName,
-    lastName,
-    displayName,
-    email,
-    companyDid: r.companyDid,
-    username: r.username,
-    islandId: map?.islandId,
-    group: map?.group,
-  };
 }
 
 function sortByRoleName<T extends { role: Role; displayName?: string; username?: string }>(arr: T[]): T[] {
@@ -118,7 +99,7 @@ function sortByRoleName<T extends { role: Role; displayName?: string; username?:
   });
 }
 
-/* ---------- load/save (NORMALIZZATO) ---------- */
+/* ---------- registry load/save ---------- */
 
 export function getRegistry(): IdentityRegistry {
   const reg = safeGet<IdentityRegistry>(STORAGE_KEYS.identityRegistry, emptyRegistry());
@@ -142,7 +123,7 @@ export function saveRegistry(reg: IdentityRegistry): void {
   safeSet(STORAGE_KEYS.identityRegistry, normalized);
 }
 
-/* ---------- gestione isole (storage separato, compatibile con tipi esistenti) ---------- */
+/* ---------- Isole (compatibili con logica esistente) ---------- */
 
 function loadIslands(): Island[] {
   return safeGet<Island[]>(KEY_ISLANDS, []);
@@ -157,12 +138,10 @@ function saveMemberIslands(list: MemberIsland[]) {
   safeSet(KEY_MEMBER_ISLANDS, list);
 }
 
-/** Elenco isole dell'azienda */
 export function listIslands(companyDid: string): Island[] {
   return loadIslands().filter((i) => i.companyDid === companyDid);
 }
 
-/** Crea/Aggiorna isola */
 export function upsertIsland(
   input: Omit<Island, "id"> & Partial<Pick<Island, "id">>
 ): Island {
@@ -176,7 +155,6 @@ export function upsertIsland(
   return next;
 }
 
-/** Elimina isola e sgancia i membri collegati */
 export function removeIsland(islandId: string) {
   const list = loadIslands().filter((i) => i.id !== islandId);
   saveIslands(list);
@@ -184,12 +162,10 @@ export function removeIsland(islandId: string) {
   saveMemberIslands(map);
 }
 
-/** Mapping: leggi associazione membro↔isola */
 export function getMemberIsland(did: string): MemberIsland | undefined {
   return loadMemberIslands().find((m) => m.did === did);
 }
 
-/** Mapping: imposta associazione membro↔isola e gruppo opzionale */
 export function setMemberIsland(did: string, islandId?: string, group?: string): MemberIsland {
   const map = loadMemberIslands();
   const idx = map.findIndex((m) => m.did === did);
@@ -200,6 +176,82 @@ export function setMemberIsland(did: string, islandId?: string, group?: string):
   return rec;
 }
 
+/* ---------- Team (nuovo: CRUD + membership) ---------- */
+
+function loadTeams(): Team[] {
+  return safeGet<Team[]>(KEY_TEAMS, []);
+}
+function saveTeams(list: Team[]) {
+  safeSet(KEY_TEAMS, list);
+}
+
+/** Elenco team; se companyDid è passato filtra per azienda */
+export function listTeams(companyDid?: string): Team[] {
+  const all = loadTeams();
+  return companyDid ? all.filter((t) => t.companyDid === companyDid) : all;
+}
+
+/** Crea team */
+export function createTeam(input: { name: string; companyDid: string }): Team {
+  const id = `team_${randomHex(8)}`;
+  const team: Team = { id, name: input.name, companyDid: input.companyDid, memberDids: [] };
+  const list = loadTeams();
+  list.push(team);
+  saveTeams(list);
+  return team;
+}
+
+/** Rinomina team */
+export function renameTeam(teamId: string, name: string): Team {
+  const list = loadTeams();
+  const idx = list.findIndex((t) => t.id === teamId);
+  if (idx < 0) throw new Error("Team non trovato");
+  list[idx] = { ...list[idx], name };
+  saveTeams(list);
+  return list[idx];
+}
+
+/** Elimina team e rimuove membership */
+export function deleteTeam(teamId: string) {
+  const list = loadTeams();
+  const filtered = list.filter((t) => t.id !== teamId);
+  saveTeams(filtered);
+}
+
+/** Trova il team attuale di un membro (id) */
+export function getMemberTeamId(memberDid: string): string | undefined {
+  const list = loadTeams();
+  return list.find((t) => t.memberDids.includes(memberDid))?.id;
+}
+
+/** Assegna un membro a un team. Passa null per rimuoverlo da ogni team. */
+export function assignMemberToTeam(memberDid: string, teamId: string | null) {
+  const list = loadTeams();
+  // rimuovi da eventuale team precedente
+  for (const t of list) {
+    if (t.memberDids.includes(memberDid)) {
+      t.memberDids = t.memberDids.filter((d) => d !== memberDid);
+    }
+  }
+  // assegna al nuovo team
+  if (teamId) {
+    const t = list.find((x) => x.id === teamId);
+    if (!t) throw new Error("Team non trovato");
+    if (!t.memberDids.includes(memberDid)) t.memberDids.push(memberDid);
+  }
+  saveTeams(list);
+}
+
+/** Lista membri di un team come IdentityRecord */
+export function listTeamMembers(teamId: string): IdentityRecord[] {
+  const reg = getRegistry();
+  const t = loadTeams().find((x) => x.id === teamId);
+  if (!t) return [];
+  return t.memberDids
+    .map((did) => reg.actors[did])
+    .filter((a): a is IdentityRecord => !!a);
+}
+
 /* ---------- companies ---------- */
 
 export type CompanyInput = {
@@ -207,7 +259,6 @@ export type CompanyInput = {
   details?: CompanyDetails;
 };
 
-/** Crea solo la scheda azienda (senza account) */
 export function createCompany(input: CompanyInput): Company {
   const { name, details } = input;
   const reg = getRegistry();
@@ -218,7 +269,6 @@ export function createCompany(input: CompanyInput): Company {
   return company;
 }
 
-/** Elimina azienda; se cascade=true elimina anche account Company, membri e relative seed (MOCK). */
 export function deleteCompany(companyDid: string, opts?: { cascade?: boolean }) {
   const reg = getRegistry();
   if (!reg.companies[companyDid]) return;
@@ -233,6 +283,10 @@ export function deleteCompany(companyDid: string, opts?: { cascade?: boolean }) 
   const map = loadMemberIslands().map((m) => (members.includes(m.did) ? { ...m, islandId: undefined } : m));
   saveMemberIslands(map);
 
+  // pulizia team
+  const remainingTeams = loadTeams().filter((t) => t.companyDid !== companyDid);
+  saveTeams(remainingTeams);
+
   if (opts?.cascade) {
     for (const did of Object.keys(reg.actors)) {
       const a = reg.actors[did];
@@ -242,7 +296,6 @@ export function deleteCompany(companyDid: string, opts?: { cascade?: boolean }) 
       }
     }
   } else {
-    // unlink soft (mantiene gli attori ma senza appartenenza)
     for (const a of Object.values(reg.actors)) {
       if (a.companyDid === companyDid) a.companyDid = undefined;
     }
@@ -274,13 +327,12 @@ export async function createCompanyAccount(
   };
 
   reg.actors[did] = record;
-  reg.seeds![did] = seed; // MOCK: archivio seed
+  reg.seeds![did] = seed;
   saveRegistry(reg);
 
   return { record, seed };
 }
 
-/** Convenience: crea company + account company in un colpo solo */
 export async function createCompanyWithAccount(
   input: CompanyInput,
   username?: string
@@ -300,13 +352,11 @@ export function listCompanies(): Company[] {
   return Object.values(reg.companies);
 }
 
-/** Lista di tutti gli account con ruolo 'company' */
 export function listCompanyAccounts(): IdentityRecord[] {
   const reg = getRegistry();
   return Object.values(reg.actors).filter((a) => a.role === "company");
 }
 
-/** Ritorna tutte le seed degli account company presenti (MOCK) */
 export function listCompanyAccountsWithSeeds(): Array<{
   did: string;
   companyDid?: string;
@@ -330,10 +380,25 @@ export function getActor(did: string): IdentityRecord | undefined {
   return reg.actors[did];
 }
 
-/** Profilo pubblico di un attore */
-export function getPublicMember(did: string): PublicMember | undefined {
-  const a = getActor(did);
-  return a ? toPublicMember(a) : undefined;
+function toPublicMember(r: IdentityRecord): PublicMember {
+  const displayName = toDisplayName(r);
+  const { firstName, lastName } = splitName(r.username);
+  const email =
+    (r as any).email ??
+    (r.username ? `${r.username.replace(/\s+/g, ".").toLowerCase()}@mock.local` : undefined);
+  const map = getMemberIsland(r.did);
+  return {
+    did: r.did,
+    role: r.role,
+    firstName,
+    lastName,
+    displayName,
+    email,
+    companyDid: r.companyDid,
+    username: r.username,
+    islandId: map?.islandId,
+    group: map?.group,
+  };
 }
 
 export function upsertActor(record: IdentityRecord): IdentityRecord {
@@ -376,7 +441,7 @@ export async function createInternalActor(
 
   const record: IdentityRecord = { did, role, username, publicKey: kp.publicKey, companyDid };
   reg.actors[did] = record;
-  reg.seeds![did] = seed; // MOCK: conserva mnemonica per recupero
+  reg.seeds![did] = seed;
   saveRegistry(reg);
 
   return { record, seed };
@@ -389,7 +454,6 @@ export function listCompanyMembers(companyDid: string): IdentityRecord[] {
   );
 }
 
-/** Seed dei membri di un'azienda (MOCK) */
 export function listCompanyMemberSeeds(
   companyDid: string
 ): Array<{ did: string; role: Role; username?: string; seed?: string }> {
@@ -403,7 +467,6 @@ export function listCompanyMemberSeeds(
   }));
 }
 
-/** Collega un attore esistente (DID) all'azienda */
 export function linkUserToCompany(userDid: string, companyDid: string): IdentityRecord {
   const reg = getRegistry();
   if (!reg.companies[companyDid]) throw new Error("Azienda inesistente");
@@ -426,18 +489,15 @@ export function ensureAdmin(username = "admin"): IdentityRecord {
   return reg.actors[did];
 }
 
-/* ---------- interfacce richieste dalla UI: fallback list* ---------- */
+/* ---------- interfacce richieste dalla UI ---------- */
 
-/** Profili membri di un’azienda con shape public richiesto */
 export function listMembersByCompany(companyDid: string): PublicMember[] {
   const members = listCompanyMembers(companyDid).map(toPublicMember);
   return sortByRoleName(members);
 }
 
-/** Alias comodo */
 export const listByCompany = listMembersByCompany;
 
-/** Elenco profili membri; se companyDid è omesso ritorna tutti i membri non-company */
 export function listMembers(companyDid?: string): PublicMember[] {
   const reg = getRegistry();
   const all = Object.values(reg.actors).filter((a) => a.role !== "company");
@@ -445,5 +505,8 @@ export function listMembers(companyDid?: string): PublicMember[] {
   return sortByRoleName(filtered.map(toPublicMember));
 }
 
-/** Alias generico chiesto dalla UI */
+export function listMembersByRole(companyDid: string, role: Extract<Role, "creator" | "operator" | "machine">): PublicMember[] {
+  return listMembers(companyDid).filter((m) => m.role === role);
+}
+
 export const list = listMembers;

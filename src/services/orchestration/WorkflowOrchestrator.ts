@@ -16,6 +16,10 @@ import { SnapshotStorage } from "@/services/storage/SnapshotStorage";
 import { listVCs } from "@/services/api/vc";
 import type { VC, VCStatus } from "@/types/vc";
 
+/* ---- Dati prodotto + defs compliance ---- */
+import { getProductById } from "@/services/api/products";
+import { getCompanyAttrs, type ComplianceDef } from "@/services/api/companyAttributes";
+
 /* ============================== Tipi ============================== */
 
 export type OrgVCMap = Partial<Record<StandardId, VerifiableCredential<any>>>;
@@ -90,6 +94,57 @@ async function collectFromNewApi(productId: string) {
   return { org, prod };
 }
 
+/* -------- Compliance prodotto: defs aziendali + valori prodotto -------- */
+
+function readProductCompliance(productId: string): {
+  attrs: Record<string, unknown>;
+  defs: ComplianceDef[];
+} {
+  const p: any = getProductById(productId);
+  if (!p) return { attrs: {}, defs: [] };
+  const companyDid: string | undefined = p.companyDid;
+  const defs = companyDid ? (getCompanyAttrs(companyDid).compliance ?? []) : [];
+  const attrs = (p.complianceAttrs ?? {}) as Record<string, unknown>;
+  return { attrs, defs };
+}
+
+function missingRequired(defs: ComplianceDef[], attrs: Record<string, unknown>): string[] {
+  const requiredKeys = defs.filter((d) => d.required).map((d) => d.key);
+  const miss: string[] = [];
+  for (const k of requiredKeys) {
+    const v = attrs[k];
+    const emptyString = typeof v === "string" && v.trim() === "";
+    const emptyNumber = typeof v === "number" && !Number.isFinite(v);
+    if (v === undefined || v === null || emptyString || emptyNumber) miss.push(k);
+  }
+  return miss;
+}
+
+function mergeComplianceMissing(report: ComplianceReport, missingKeys: string[]): ComplianceReport {
+  if (!missingKeys.length) return report;
+  const extra = {
+    scope: "product",
+    standard: "COMPANY_PROFILE",
+    reason: `Attributi richiesti mancanti: ${missingKeys.join(", ")}`,
+    fields: missingKeys,
+  } as any as MissingItem;
+  const baseMissing = (report?.missing as any[]) ?? [];
+  return { ok: false, missing: [...baseMissing, extra] as any } as ComplianceReport;
+}
+
+function attachProductComplianceToVP(vp: VerifiablePresentation, productId: string) {
+  const { attrs } = readProductCompliance(productId);
+  if (!attrs || Object.keys(attrs).length === 0) return vp;
+  const withMeta: any = vp;
+  withMeta.trustup = {
+    ...(withMeta.trustup || {}),
+    productComplianceStandard: "COMPANY_PROFILE",
+    productComplianceAttrs: attrs,
+    productId,
+  };
+  return withMeta as VerifiablePresentation;
+}
+
 /* ============================ Orchestratore ============================ */
 
 export const WorkflowOrchestrator = {
@@ -98,28 +153,57 @@ export const WorkflowOrchestrator = {
     prodVC: ProdVCMap,
     opts?: ComplianceOptions
   ): Promise<PrepareVPResult> {
+    // Proviamo a dedurre productId dall'URL per la compliance prodotto
+    const pid = productIdFromLocation();
+
     if (hasDomainVC(orgVC, prodVC)) {
-      const report = await evaluateCompliance(orgVC, prodVC, opts);
+      // 1) Valutazione compliance su VC (organizzazione+prodotto)
+      let report = await evaluateCompliance(orgVC, prodVC, opts);
+
+      // 2) Validazione attributi di compliance prodotto rispetto ai defs aziendali
+      if (pid) {
+        const { attrs, defs } = readProductCompliance(pid);
+        const miss = missingRequired(defs, attrs);
+        report = mergeComplianceMissing(report, miss);
+      }
+
+      // 3) Se incompleto → stop
       if (!report.ok) return { ok: false, report, message: "Compliance incompleta: mancano credenziali o campi richiesti" };
+
+      // 4) Verifica proof VC
       const creds = collectCreds(orgVC, prodVC);
       const allVcValid = await verifyAllVC(creds);
       if (!allVcValid) return { ok: false, report, message: "Alcune VC non superano la verifica proof" };
-      const vp = composeVP(creds);
+
+      // 5) Compose VP e includi attributi di compliance prodotto nel payload VP
+      let vp = composeVP(creds);
+      if (pid) vp = attachProductComplianceToVP(vp, pid);
+
       return { ok: true, vp, included: creds.length, report };
     }
 
-    const pid = productIdFromLocation();
-    if (!pid) {
+    // Fallback: raccolta da nuovo storage
+    const pid2 = pid;
+    if (!pid2) {
       const report = fallbackReport(0, 0, "unknown");
       return { ok: false, report, message: "productId non rilevato dall'URL" };
     }
 
-    const { org, prod } = await collectFromNewApi(pid);
-    const report = fallbackReport(org.length, prod.length, pid);
-    const adapted: VerifiableCredential[] = [...org, ...prod].map(adaptVC);
-    const vp = composeVP(adapted);
+    const { org, prod } = await collectFromNewApi(pid2);
+    let report = fallbackReport(org.length, prod.length, pid2);
 
-    if (!report.ok) return { ok: false, report, message: "Compliance incompleta nelle VC del nuovo storage" };
+    // Aggiungi controllo compliance prodotto (defs aziendali)
+    {
+      const { attrs, defs } = readProductCompliance(pid2);
+      const miss = missingRequired(defs, attrs);
+      report = mergeComplianceMissing(report, miss);
+    }
+
+    const adapted: VerifiableCredential[] = [...org, ...prod].map(adaptVC);
+    let vp = composeVP(adapted);
+    vp = attachProductComplianceToVP(vp, pid2);
+
+    if (!report.ok) return { ok: false, report, message: "Compliance incompleta nelle VC o negli attributi prodotto" };
     return { ok: true, vp, included: adapted.length, report };
   },
 
@@ -138,10 +222,19 @@ export const WorkflowOrchestrator = {
 
   async generateAndPublishVP(productId: string): Promise<PublishResult> {
     const { org, prod } = await collectFromNewApi(productId);
-    const report = fallbackReport(org.length, prod.length, productId);
+    let report = fallbackReport(org.length, prod.length, productId);
+
+    // Controllo compliance prodotto
+    {
+      const { attrs, defs } = readProductCompliance(productId);
+      const miss = missingRequired(defs, attrs);
+      report = mergeComplianceMissing(report, miss);
+      if (!report.ok) return { ok: false, message: "Compliance incompleta nelle VC o negli attributi prodotto" };
+    }
+
     const adapted: VerifiableCredential[] = [...org, ...prod].map(adaptVC);
-    if (!report.ok) return { ok: false, message: "Compliance incompleta nelle VC del nuovo storage" };
-    const vp = composeVP(adapted);
+    let vp = composeVP(adapted);
+    vp = attachProductComplianceToVP(vp, productId);
     return await this.publishVP(vp);
   },
 

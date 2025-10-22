@@ -1,3 +1,4 @@
+// src/pages/company/CompanyAttributesPage.tsx
 import * as React from "react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -5,22 +6,43 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
 import { getActor } from "@/services/api/identity";
+import {
+  getCompanyAttrs,
+  setCompanyAttrs,
+  type CompanyAttributes,
+} from "@/services/api/companyAttributes";
 
-// Chiave LS per tutti gli attributi aziendali (mappa { [companyDid]: any })
-const LS_KEY_COMPANY_ATTRS = "mock.company.attrs";
+/* ============================ Esempio JSON ============================ */
 
-// Helpers locali (evitiamo di toccare i services adesso)
-function readAllCompanyAttrs(): Record<string, any> {
-  try {
-    const raw = localStorage.getItem(LS_KEY_COMPANY_ATTRS);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-function writeAllCompanyAttrs(map: Record<string, any>) {
-  localStorage.setItem(LS_KEY_COMPANY_ATTRS, JSON.stringify(map));
-}
+const EXAMPLE_JSON = JSON.stringify(
+  {
+    vLEI: "984500A1B2C3D4E5F6G7",
+    islands: [
+      {
+        id: "is-1",
+        name: "Linea A",
+        machines: [{ id: "m-1", name: "Pressa A1" }],
+        shifts: [{ id: "s1", name: "Giorno", from: "06:00", to: "14:00" }],
+        energyMeters: [{ id: "em-1", model: "EM-3000" }],
+        notes: "Linea principale",
+      },
+    ],
+    compliance: [
+      { key: "countryOfOrigin", label: "Paese origine", type: "string", required: true },
+      { key: "hazardous", label: "Pericoloso", type: "boolean" },
+      {
+        key: "eprCategory",
+        label: "Categoria EPR",
+        type: "select",
+        options: [{ value: "A" }, { value: "B" }],
+      },
+    ],
+  },
+  null,
+  2
+);
+
+/* ================================ Page ================================ */
 
 export default function CompanyAttributesPage() {
   const { currentUser } = useAuth();
@@ -32,15 +54,14 @@ export default function CompanyAttributesPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [ok, setOk] = React.useState<string | null>(null);
 
-  // Bootstrap: carica gli attributi esistenti dell'azienda
+  // Bootstrap: carica gli attributi aziendali tramite service (gestisce migrazione)
   React.useEffect(() => {
     if (!companyDid) {
       setJsonText("{}");
       return;
     }
-    const all = readAllCompanyAttrs();
-    const current = all[companyDid] ?? {};
-    setJsonText(JSON.stringify(current, null, 2));
+    const attrs = getCompanyAttrs(companyDid);
+    setJsonText(JSON.stringify(attrs, null, 2));
   }, [companyDid]);
 
   function handleFormat() {
@@ -48,13 +69,19 @@ export default function CompanyAttributesPage() {
       const parsed = JSON.parse(jsonText || "{}");
       setJsonText(JSON.stringify(parsed, null, 2));
       setError(null);
-    } catch (e: any) {
+    } catch {
       setError("JSON non valido: impossibile formattare.");
     }
   }
 
   function handleClear() {
     setJsonText("{}");
+    setError(null);
+    setOk(null);
+  }
+
+  function handleExample() {
+    setJsonText(EXAMPLE_JSON);
     setError(null);
     setOk(null);
   }
@@ -66,7 +93,7 @@ export default function CompanyAttributesPage() {
       setOk(null);
       if (!companyDid) throw new Error("Azienda non rilevata per questo account.");
 
-      let parsed: any = {};
+      let parsed: unknown = {};
       if (jsonText && jsonText.trim()) {
         try {
           parsed = JSON.parse(jsonText);
@@ -75,16 +102,17 @@ export default function CompanyAttributesPage() {
         }
       }
 
-      // (Facoltativo) Validazione con schema AJV:
-      // - in futuro: carica schema da /public/schemas/company/*.json e valida qui
-      // const schema = await fetch("/schemas/company_profile.v1.json").then(r => r.json());
-      // const valid = validateJson(parsed, schema); if (!valid) throw new Error("JSON non conforme allo schema");
+      // Permettiamo solo i campi del contratto CompanyAttributes
+      const { vLEI, islands, compliance } = (parsed as CompanyAttributes) ?? {};
+      const payload: CompanyAttributes = {
+        vLEI,
+        islands,
+        compliance,
+      };
 
-      const all = readAllCompanyAttrs();
-      all[companyDid] = parsed;
-      writeAllCompanyAttrs(all);
-
-      setOk("Salvato!");
+      const saved = setCompanyAttrs(companyDid, payload);
+      setJsonText(JSON.stringify(saved, null, 2));
+      setOk("Salvato.");
     } catch (e: any) {
       setError(e?.message ?? "Errore durante il salvataggio.");
     } finally {
@@ -98,8 +126,8 @@ export default function CompanyAttributesPage() {
         <CardHeader>
           <CardTitle>Attributi azienda</CardTitle>
           <CardDescription>
-            Inserisci/aggiorna gli attributi della tua azienda (es. certificazioni, metadati legali, contatti, ecc.).
-            I dati sono salvati in locale (mock) e saranno usati per popolare il DPP/VC nelle fasi successive.
+            Struttura unica supportata: <code>{`{ vLEI, islands, compliance }`}</code>. I dati sono locali (mock) e
+            alimentano form prodotto e DPP.
           </CardDescription>
         </CardHeader>
 
@@ -118,13 +146,16 @@ export default function CompanyAttributesPage() {
                 <Label>JSON attributi</Label>
                 <Textarea
                   className="h-80 font-mono"
-                  placeholder='{"legalName":"Acme S.p.A.","vatNumber":"IT01234567890","isoCertifications":["ISO 9001"]}'
+                  placeholder='{"vLEI":"...","islands":[...],"compliance":[...]}'
                   value={jsonText}
                   onChange={(e) => setJsonText(e.target.value)}
                 />
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" onClick={handleFormat}>
                     Format JSON
+                  </Button>
+                  <Button variant="outline" onClick={handleExample}>
+                    Inserisci esempio
                   </Button>
                   <Button variant="outline" onClick={handleClear}>
                     Svuota
@@ -137,11 +168,25 @@ export default function CompanyAttributesPage() {
                 </div>
               </div>
 
-              {/* Suggerimento veloce su cosa mettere */}
-              <div className="text-xs text-muted-foreground">
-                Suggerimento: puoi includere campi come <code>legalName</code>, <code>vatNumber</code>,{" "}
-                <code>address</code>, <code>contactEmail</code>, <code>isoCertifications</code>,{" "}
-                <code>website</code>, <code>sustainabilityPolicy</code>. La validazione schema arriverà in seguito.
+              <div className="text-xs text-muted-foreground space-y-2">
+                <div>
+                  <b>vLEI</b>: codice vLEI aziendale (opzionale).
+                </div>
+                <div>
+                  <b>islands</b>: linee/isole con macchine, turni e contatori energia.
+                </div>
+                <div>
+                  <b>compliance</b>: definizioni degli attributi compilativi per i prodotti. Esempio:
+                </div>
+                <pre className="mt-1 rounded bg-muted p-2 text-[11px] overflow-x-auto">
+{`{
+  "compliance": [
+    { "key":"countryOfOrigin","label":"Paese origine","type":"string","required":true },
+    { "key":"hazardous","label":"Pericoloso","type":"boolean" },
+    { "key":"eprCategory","label":"Categoria EPR","type":"select","options":[{"value":"A"},{"value":"B"}] }
+  ]
+}`}
+                </pre>
               </div>
             </>
           )}

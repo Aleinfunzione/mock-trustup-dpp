@@ -25,6 +25,8 @@ type Props = {
   showVerify?: boolean;
   /** Filtri opzionali: per isola e/o assegnatario */
   filters?: Filters;
+  /** Filtra solo gli eventi del nodo BOM indicato */
+  bomNodeId?: string;
 };
 
 function fmtCredits(n: number) {
@@ -42,7 +44,6 @@ function deriveCost(e: UIEvent): number | undefined {
     anyE.data?.billing?.cost;
   if (Number.isFinite(fromPayload)) return Number(fromPayload);
 
-  // fallback: prova mapping per tipo, poi EVENT_CREATE
   const byType = Number(costOf((e.type as any) ?? "EVENT_CREATE"));
   if (Number.isFinite(byType) && byType > 0) return byType;
 
@@ -66,6 +67,7 @@ export default function EventTimeline({
   title = "Timeline eventi",
   showVerify = true,
   filters,
+  bomNodeId,
 }: Props) {
   const { toast } = useToast();
   const { listByProduct, verifyEventIntegrity } = useEvents();
@@ -75,7 +77,6 @@ export default function EventTimeline({
   const [verifying, setVerifying] = React.useState<Record<string, boolean>>({});
   const [integrity, setIntegrity] = React.useState<Record<string, boolean | null>>({});
 
-  // Caricamento eventi del prodotto
   React.useEffect(() => {
     let mounted = true;
     (async () => {
@@ -102,17 +103,26 @@ export default function EventTimeline({
     return () => {
       mounted = false;
     };
-  }, [productId]); // deliberate: no listByProduct/toast in deps
+  }, [productId]); // no deps extra
 
-  // Applica filtri client-side se passati via props
+  // Label per badge BOM (se disponibile su qualche evento)
+  const bomBadgeLabel = React.useMemo(() => {
+    if (!bomNodeId) return undefined;
+    const hit = rows.find((e) => (e as any)?.data?.targetNodeId === bomNodeId);
+    const lbl = (hit as any)?.data?.targetLabel as string | undefined;
+    return lbl ? `${lbl} (${bomNodeId})` : bomNodeId;
+  }, [rows, bomNodeId]);
+
+  // Filtri client-side
   const visible = React.useMemo(() => {
-    if (!filters) return rows;
     return rows.filter((e) => {
-      const islandOk = !filters.islandId || (e as any)?.data?.islandId === filters.islandId;
-      const assigneeOk = !filters.assignedToDid || e.assignedToDid === filters.assignedToDid;
-      return islandOk && assigneeOk;
+      const d: any = (e as any).data || {};
+      const islandOk = !filters?.islandId || d.islandId === filters.islandId;
+      const assigneeOk = !filters?.assignedToDid || e.assignedToDid === filters.assignedToDid;
+      const bomOk = !bomNodeId || d.targetNodeId === bomNodeId;
+      return islandOk && assigneeOk && bomOk;
     });
-  }, [rows, filters]);
+  }, [rows, filters, bomNodeId]);
 
   const handleVerify = async (id: string) => {
     try {
@@ -135,12 +145,15 @@ export default function EventTimeline({
       </CardHeader>
       <CardContent className="relative z-0 overflow-hidden">
         {/* Barra filtri attivi */}
-        {filters && (filters.islandId || filters.assignedToDid) && (
+        {(filters || bomNodeId) && (
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
             <span className="text-muted-foreground">Filtri:</span>
-            {filters.islandId && <Badge variant="outline">Isola: {filters.islandId}</Badge>}
-            {filters.assignedToDid && (
+            {filters?.islandId && <Badge variant="outline">Isola: {filters.islandId}</Badge>}
+            {filters?.assignedToDid && (
               <Badge variant="outline">Assegnato a: {filters.assignedToDid}</Badge>
+            )}
+            {bomNodeId && (
+              <Badge variant="outline">BOM: {bomBadgeLabel}</Badge>
             )}
           </div>
         )}
@@ -149,7 +162,7 @@ export default function EventTimeline({
           <div className="text-sm text-muted-foreground">Caricamento…</div>
         ) : visible.length === 0 ? (
           <div className="text-sm text-muted-foreground">
-            Nessun evento {filters ? "per i filtri correnti" : "registrato per questo prodotto"}.
+            Nessun evento {filters || bomNodeId ? "per i filtri correnti" : "registrato per questo prodotto"}.
           </div>
         ) : (
           <ol className="relative border-s border-neutral-300 dark:border-neutral-700">

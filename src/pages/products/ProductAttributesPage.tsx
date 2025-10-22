@@ -56,7 +56,7 @@ export default function ProductAttributesPage() {
       ? (getIsland(companyDid, product.islandId)?.name ?? product.islandId)
       : undefined;
 
-  const baseRows: [string, string][] = React.useMemo(() => {
+  const baseRows: [string, string][] = (() => {
     const rows: [string, string][] = [];
     const add = (label: string, val: any) => {
       if (val !== undefined && val !== null && val !== "") rows.push([label, String(val)]);
@@ -75,14 +75,14 @@ export default function ProductAttributesPage() {
     add("Creato", product?.createdAt);
     add("Aggiornato", product?.updatedAt);
     return rows;
-  }, [product, companyDid, islandName]);
+  })();
 
-  const customRows: [string, string][] = React.useMemo(() => {
+  const customRows: [string, string][] = (() => {
     if (!product?.attributes || typeof product.attributes !== "object") return [];
     return Object.entries(product.attributes as Record<string, any>)
       .filter(([, v]) => v !== undefined && v !== null && v !== "")
       .map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : String(v)]);
-  }, [product]);
+  })();
 
   return (
     <div className="space-y-6">

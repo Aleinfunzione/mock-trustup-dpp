@@ -38,6 +38,8 @@ async function sha256Hex(input: string): Promise<string> {
 
 /* ---------------- tipi estesi (solo interni a questo modulo) ---------------- */
 
+type ComplianceValue = string | number | boolean | null | undefined;
+
 export type ProductExt = Product & {
   /** Pillole compilate dal Catalogo Attributi (RJSF). */
   attributesPills?: PillInstance[];
@@ -46,6 +48,11 @@ export type ProductExt = Product & {
    * Struttura: { gs1: any; iso: any; euDpp: any }
    */
   dppDraft?: any;
+  /**
+   * Attributi di compliance assegnati al prodotto (derivano da CompanyAttributes.compliance).
+   * Se il tipo Product di progetto include già `complianceAttrs`, questo campo è ridondante ma compatibile.
+   */
+  complianceAttrs?: Record<string, ComplianceValue>;
 };
 
 type ProductsMap = Record<string, ProductExt>;
@@ -159,6 +166,23 @@ function syncDppDraft(p: ProductExt) {
   p.dppDraft = aggregated;
 }
 
+/* ---------------- Helpers compliance ---------------- */
+
+function sanitizeComplianceAttrs(
+  input: Record<string, ComplianceValue> | undefined | null
+): Record<string, ComplianceValue> {
+  const out: Record<string, ComplianceValue> = {};
+  if (!input || typeof input !== "object") return out;
+  for (const [k, v] of Object.entries(input)) {
+    if (v === "") {
+      // Evita NaN o stringhe vuote: tratta come undefined → campo assente
+      continue;
+    }
+    out[k] = v as ComplianceValue;
+  }
+  return out;
+}
+
 /* ---------------- API Products (compat + estensioni) ---------------- */
 
 export interface CreateProductInput {
@@ -212,7 +236,10 @@ export function deleteProduct(id: ProductId): void {
 
 export function updateProduct(
   id: ProductId,
-  patch: Partial<Omit<Product, "id" | "companyDid" | "createdByDid" | "createdAt">>
+  patch: Partial<Omit<Product, "id" | "companyDid" | "createdByDid" | "createdAt">> & {
+    /** Consente patch diretta anche se il tipo Product non la include ancora esplicitamente */
+    complianceAttrs?: Record<string, ComplianceValue>;
+  }
 ): Product {
   const map = getProductsMap();
   const existing = map[id] as ProductExt | undefined;
@@ -221,6 +248,11 @@ export function updateProduct(
   const next: ProductExt = {
     ...existing,
     ...patch,
+    // se la patch include complianceAttrs, sanitizza
+    complianceAttrs:
+      patch.complianceAttrs !== undefined
+        ? sanitizeComplianceAttrs(patch.complianceAttrs)
+        : existing.complianceAttrs,
     updatedAt: nowISO(),
   };
 
@@ -259,6 +291,38 @@ export function updateProduct(
   return next;
 }
 
+/** API dedicata per la compliance: persiste `product.complianceAttrs` */
+export function setProductCompliance(
+  productId: ProductId,
+  attrs: Record<string, ComplianceValue>
+): Product {
+  const map = getProductsMap();
+  const p = map[productId] as ProductExt | undefined;
+  if (!p) throw new Error("Prodotto inesistente");
+
+  p.complianceAttrs = sanitizeComplianceAttrs(attrs);
+  p.updatedAt = nowISO();
+
+  map[productId] = p;
+  saveProductsMap(map);
+
+  createEvent({
+    type: "product.updated",
+    productId: p.id,
+    companyDid: p.companyDid,
+    actorDid: p.createdByDid,
+    data: { action: "compliance.set", keys: Object.keys(p.complianceAttrs || {}) },
+  });
+
+  return p;
+}
+
+/** Facoltativa: lettura comoda degli attributi di compliance salvati */
+export function getProductCompliance(productId: ProductId): Record<string, ComplianceValue> {
+  const p = getProductById(productId);
+  return (p?.complianceAttrs as Record<string, ComplianceValue>) ?? {};
+}
+
 export function setBOM(productId: ProductId, bom: BomNode[]) {
   const v = validateBOM(bom ?? []);
   if (!v.ok) throw new Error(v.error);
@@ -281,6 +345,8 @@ export function createProduct(input: CreateProductInput): Product {
     attributesPills: [],
     // Aggregato iniziale vuoto
     dppDraft: { gs1: {}, iso: {}, euDpp: {} },
+    // Compliance inizialmente vuota
+    complianceAttrs: {},
     createdAt: nowISO(),
     updatedAt: nowISO(),
     isPublished: false,
@@ -433,5 +499,5 @@ export async function publishDPP(productId: ProductId): Promise<Product> {
     data: { dppId: (prod as any).dppId },
   });
 
-  return prod;
+  return prod as Product;
 }

@@ -1,30 +1,41 @@
+// src/pages/products/ProductCreatePage.tsx
 import * as React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/useAuth";
 import { useProducts } from "@/hooks/useProducts";
-
 // opzionale: tenta API diretta se esiste
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import * as ProductsApi from "@/services/api/products";
+// isole azienda
+import { getCompanyAttrs, type Island } from "@/services/api/companyAttributes";
 
 export default function ProductCreatePage() {
   const { currentUser } = useAuth();
   const nav = useNavigate();
   const role = currentUser?.role === "company" ? "company" : "creator";
   const base = `/${role}/products`;
+  const companyDid = (currentUser as any)?.companyDid;
 
-  const { create: hookCreate } = useProducts?.() ?? ({} as any);
+  const { create: hookCreate } = (useProducts?.() as any) ?? {};
 
   const [name, setName] = React.useState("");
   const [typeId, setTypeId] = React.useState("generic");
   const [sku, setSku] = React.useState("");
   const [islandId, setIslandId] = React.useState("");
+  const [islands, setIslands] = React.useState<Island[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!companyDid) return;
+    const attrs = getCompanyAttrs(companyDid);
+    const list = Array.isArray(attrs?.islands) ? (attrs.islands as Island[]) : [];
+    setIslands(list);
+  }, [companyDid]);
 
   async function doCreate(payload: any): Promise<string> {
     // 1) hook se disponibile
@@ -46,8 +57,7 @@ export default function ProductCreatePage() {
       if (id) return id as string;
     }
     // 3) fallback locale
-    const fallbackId = `prd_${Date.now().toString(16)}`;
-    return fallbackId;
+    return `prd_${Date.now().toString(16)}`;
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -64,7 +74,7 @@ export default function ProductCreatePage() {
         type: typeId || "generic",
         sku: sku || undefined,
         islandId: islandId || undefined,
-        companyDid: (currentUser as any)?.companyDid,
+        companyDid,
         ownerDid: (currentUser as any)?.did,
       };
       const newId = await doCreate(payload);
@@ -113,8 +123,16 @@ export default function ProductCreatePage() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="island">Isola (opzionale)</Label>
-              <Input id="island" value={islandId} onChange={(e) => setIslandId(e.target.value)} placeholder="island-id" />
+              <Label>Isola (opzionale)</Label>
+              <Select value={islandId} onValueChange={(v) => setIslandId(v)}>
+                <SelectTrigger><SelectValue placeholder="Nessuna" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Nessuna</SelectItem>
+                  {islands.map((i) => (
+                    <SelectItem key={i.id} value={i.id}>{i.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="flex gap-2 pt-2">
