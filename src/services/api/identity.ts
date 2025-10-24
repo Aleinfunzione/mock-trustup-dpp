@@ -13,6 +13,7 @@ import {
   didFromPublicKey,
   generateMnemonic12,
 } from "@/services/crypto/did";
+import { createEvent } from "@/services/api/events";
 
 /* ---------- nuovi tipi locali (scoped a questo file) ---------- */
 
@@ -46,6 +47,8 @@ const KEY_MEMBER_ISLANDS = "identity.memberIslands";
 const KEY_TEAMS = "identity.teams";
 
 /* ---------- helpers ---------- */
+
+const SYSTEM_DID = "did:system:identity";
 
 function emptyRegistry(): IdentityRegistry {
   return { actors: {}, companies: {}, seeds: {} };
@@ -97,6 +100,16 @@ function sortByRoleName<T extends { role: Role; displayName?: string; username?:
     const bn = (b as any).displayName ?? b.username ?? "";
     return String(an).localeCompare(String(bn));
   });
+}
+
+/* ---------- EVENTI: wrapper tip-safe ---------- */
+
+function emitCompanyEvent(evt: { type: string; companyDid?: string; actorDid?: string; data?: any }) {
+  try {
+    createEvent(evt as any);
+  } catch {
+    /* noop */
+  }
 }
 
 /* ---------- registry load/save ---------- */
@@ -173,6 +186,19 @@ export function setMemberIsland(did: string, islandId?: string, group?: string):
   if (idx >= 0) map[idx] = rec;
   else map.push(rec);
   saveMemberIslands(map);
+
+  // evento
+  const reg = getRegistry();
+  const companyDid = reg.actors[did]?.companyDid;
+  if (companyDid) {
+    emitCompanyEvent({
+      type: "company.updated",
+      companyDid,
+      actorDid: did,
+      data: { action: "island.set", memberDid: did, islandId, group },
+    });
+  }
+
   return rec;
 }
 
@@ -198,6 +224,14 @@ export function createTeam(input: { name: string; companyDid: string }): Team {
   const list = loadTeams();
   list.push(team);
   saveTeams(list);
+
+  emitCompanyEvent({
+    type: "company.updated",
+    companyDid: input.companyDid,
+    actorDid: SYSTEM_DID,
+    data: { action: "team.created", teamId: id, name: input.name },
+  });
+
   return team;
 }
 
@@ -206,16 +240,35 @@ export function renameTeam(teamId: string, name: string): Team {
   const list = loadTeams();
   const idx = list.findIndex((t) => t.id === teamId);
   if (idx < 0) throw new Error("Team non trovato");
-  list[idx] = { ...list[idx], name };
+  const team = { ...list[idx], name };
+  list[idx] = team;
   saveTeams(list);
-  return list[idx];
+
+  emitCompanyEvent({
+    type: "company.updated",
+    companyDid: team.companyDid,
+    actorDid: SYSTEM_DID,
+    data: { action: "team.renamed", teamId, name },
+  });
+
+  return team;
 }
 
 /** Elimina team e rimuove membership */
 export function deleteTeam(teamId: string) {
   const list = loadTeams();
+  const t = list.find((x) => x.id === teamId);
   const filtered = list.filter((t) => t.id !== teamId);
   saveTeams(filtered);
+
+  if (t) {
+    emitCompanyEvent({
+      type: "company.updated",
+      companyDid: t.companyDid,
+      actorDid: SYSTEM_DID,
+      data: { action: "team.deleted", teamId },
+    });
+  }
 }
 
 /** Trova il team attuale di un membro (id) */
@@ -228,18 +281,35 @@ export function getMemberTeamId(memberDid: string): string | undefined {
 export function assignMemberToTeam(memberDid: string, teamId: string | null) {
   const list = loadTeams();
   // rimuovi da eventuale team precedente
+  let prevTeamId: string | undefined;
   for (const t of list) {
     if (t.memberDids.includes(memberDid)) {
       t.memberDids = t.memberDids.filter((d) => d !== memberDid);
+      prevTeamId = t.id;
     }
   }
   // assegna al nuovo team
+  let companyDidForEvent: string | undefined;
   if (teamId) {
     const t = list.find((x) => x.id === teamId);
     if (!t) throw new Error("Team non trovato");
     if (!t.memberDids.includes(memberDid)) t.memberDids.push(memberDid);
+    companyDidForEvent = t.companyDid;
+  } else {
+    // nessun team; ricava company dal record del membro
+    const reg = getRegistry();
+    companyDidForEvent = reg.actors[memberDid]?.companyDid;
   }
   saveTeams(list);
+
+  if (companyDidForEvent) {
+    emitCompanyEvent({
+      type: "company.updated",
+      companyDid: companyDidForEvent,
+      actorDid: memberDid,
+      data: { action: "team.assign", memberDid, teamId, prevTeamId },
+    });
+  }
 }
 
 /** Lista membri di un team come IdentityRecord */
@@ -443,6 +513,13 @@ export async function createInternalActor(
   reg.actors[did] = record;
   reg.seeds![did] = seed;
   saveRegistry(reg);
+
+  emitCompanyEvent({
+    type: "company.updated",
+    companyDid,
+    actorDid: did,
+    data: { action: "member.created", memberDid: did, role },
+  });
 
   return { record, seed };
 }

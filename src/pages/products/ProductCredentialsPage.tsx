@@ -197,10 +197,26 @@ export default function ProductCredentialsPage() {
       </div>
 
       {/* Associazione VC organizzative → prodotto */}
-      <ProductCertificationsPanel
-        productId={productId}
-        onChanged={(ids) => setAttachedOrgVCIds(Array.isArray(ids) ? ids : [])}
-      />
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Certificazioni organizzative collegate</CardTitle>
+          <CardDescription>
+            Seleziona le VC dell'azienda da includere nella VP del prodotto.
+            {attachedOrgVCIds.length === 0 ? (
+              <span> Se non ne selezioni, verranno usate tutte le VC organizzative valide.</span>
+            ) : null}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="text-xs text-muted-foreground">
+            Selezionate: <span className="font-mono">{attachedOrgVCIds.length}</span>
+          </div>
+          <ProductCertificationsPanel
+            productId={productId}
+            onChanged={(ids) => setAttachedOrgVCIds(Array.isArray(ids) ? ids : [])}
+          />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

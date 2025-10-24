@@ -4,8 +4,8 @@
 //
 // NOTE:
 // - Compatibile col codice esistente (tipi importati).
-// - Estende internamente Product come ProductExt: attributesPills[] e dppDraft.
-// - La validazione AJV del TIPO usa "attributes" (object); le pillole generano dppDraft.
+// - Estende internamente Product come ProductExt: attributesPills[], dppDraft,
+//   complianceAttrs, attachedOrgVCIds[], flag publish opzionali.
 
 import { STORAGE_KEYS, PRODUCT_TYPES_BY_CATEGORY } from "@/utils/constants";
 import { safeGet, safeSet } from "@/utils/storage";
@@ -52,6 +52,15 @@ export type ProductExt = Product & {
    * Attributi di compliance assegnati al prodotto (derivano da CompanyAttributes.compliance).
    */
   complianceAttrs?: Record<string, ComplianceValue>;
+  /**
+   * VC organizzative collegate al prodotto per la composizione VP/DPP.
+   */
+  attachedOrgVCIds?: string[];
+  /**
+   * Metadati di pubblicazione mock.
+   */
+  isPublished?: boolean;
+  dppId?: string;
 };
 
 type ProductsMap = Record<string, ProductExt>;
@@ -342,9 +351,10 @@ export function createProduct(input: CreateProductInput): Product {
     complianceAttrs: {},
     // VC organizzative collegate
     attachedOrgVCIds: [],
+    // Metadati pubblicazione
+    isPublished: false,
     createdAt: nowISO(),
     updatedAt: nowISO(),
-    isPublished: false,
   };
 
   const types = getProductTypesMap();
@@ -479,11 +489,11 @@ export function attachOrgVC(productId: ProductId, vcId: string): void {
   saveProductsMap(map);
 
   createEvent({
-    type: "product.updated",
+    type: "product.vc.attached",
     productId: p.id,
     companyDid: p.companyDid,
     actorDid: p.createdByDid,
-    data: { action: "orgvc.attach", vcId },
+    data: { vcId },
   });
 }
 
@@ -497,11 +507,11 @@ export function detachOrgVC(productId: ProductId, vcId: string): void {
   saveProductsMap(map);
 
   createEvent({
-    type: "product.updated",
+    type: "product.vc.detached",
     productId: p.id,
     companyDid: p.companyDid,
     actorDid: p.createdByDid,
-    data: { action: "orgvc.detach", vcId },
+    data: { vcId },
   });
 }
 

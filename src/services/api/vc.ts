@@ -15,6 +15,7 @@ import type {
 } from "@/types/vc";
 import { computeVCHash } from "@/services/crypto/vcIntegrity";
 import { getCompanyAttrs } from "@/services/api/companyAttributes";
+import { createEvent } from "@/services/api/events";
 
 /* -------------------- storage helpers (no safeGet/safeSet) -------------------- */
 function lsGet<T = any>(key: string): T | null {
@@ -125,6 +126,15 @@ async function annotateBilling(
   }
 }
 
+/* -------------------- eventi (tolleranti al tipo) -------------------- */
+function emitVCEvent(evt: { type: string; companyDid?: string; actorDid?: string; data?: any }) {
+  try {
+    createEvent(evt as any);
+  } catch {
+    /* noop */
+  }
+}
+
 /* -------------------- firma mock -------------------- */
 async function signAndFinalize(partial: any): Promise<VC> {
   const tmp: any = { ...partial, proof: { type: "MockJWS", jws: "" } };
@@ -153,6 +163,22 @@ export async function createOrganizationVC(input: CreateOrganizationVCInput): Pr
   await annotateBilling(vc, "VC_PUBLISH", `vc:${vc.id}:publish`);
   writeVC(vc);
   writeIndex([vc.id, ...readIndex()]);
+
+  emitVCEvent({
+    type: "vc.created",
+    companyDid: vc.subjectType === "organization" ? vc.subjectId : undefined,
+    actorDid: vc.issuerDid,
+    data: {
+      vcId: vc.id,
+      subjectType: vc.subjectType,
+      subjectId: vc.subjectId,
+      schemaId: vc.schemaId,
+      status: vc.status,
+      version: vc.version,
+      billing: (vc as any).data?.billing,
+    },
+  });
+
   return vc;
 }
 
@@ -176,6 +202,21 @@ export async function createProcessVC(input: CreateProcessVCInput): Promise<VC> 
   await annotateBilling(vc, "VC_PUBLISH", `vc:${vc.id}:publish`);
   writeVC(vc);
   writeIndex([vc.id, ...readIndex()]);
+
+  emitVCEvent({
+    type: "vc.created",
+    actorDid: vc.issuerDid,
+    data: {
+      vcId: vc.id,
+      subjectType: vc.subjectType,
+      subjectId: vc.subjectId,
+      schemaId: vc.schemaId,
+      status: vc.status,
+      version: vc.version,
+      billing: (vc as any).data?.billing,
+    },
+  });
+
   return vc;
 }
 
@@ -199,6 +240,21 @@ export async function createProductVC(input: CreateProductVCInput): Promise<VC> 
   await annotateBilling(vc, "VC_PUBLISH", `vc:${vc.id}:publish`);
   writeVC(vc);
   writeIndex([vc.id, ...readIndex()]);
+
+  emitVCEvent({
+    type: "vc.created",
+    actorDid: vc.issuerDid,
+    data: {
+      vcId: vc.id,
+      subjectType: vc.subjectType,
+      subjectId: vc.subjectId,
+      schemaId: vc.schemaId,
+      status: vc.status,
+      version: vc.version,
+      billing: (vc as any).data?.billing,
+    },
+  });
+
   return vc;
 }
 
@@ -235,6 +291,21 @@ export async function revokeVC(id: string, reason?: string): Promise<VC> {
   vc.eventHistory.push({ ts: nowISO(), type: "revoke", note: reason });
   await annotateBilling(vc, "VC_REVOKE", `vc:${vc.id}:revoke`);
   writeVC(vc);
+
+  emitVCEvent({
+    type: "vc.revoked",
+    companyDid: vc.subjectType === "organization" ? vc.subjectId : undefined,
+    actorDid: vc.issuerDid,
+    data: {
+      vcId: vc.id,
+      reason: (vc as any).reason,
+      subjectType: vc.subjectType,
+      subjectId: vc.subjectId,
+      schemaId: vc.schemaId,
+      billing: (vc as any).data?.billing,
+    },
+  });
+
   return vc;
 }
 
@@ -272,6 +343,21 @@ export async function supersedeVC(
   writeVC(old);
   writeVC(next);
   writeIndex([next.id, ...readIndex()]);
+
+  emitVCEvent({
+    type: "vc.superseded",
+    companyDid: old.subjectType === "organization" ? old.subjectId : undefined,
+    actorDid: old.issuerDid,
+    data: {
+      oldId: old.id,
+      nextId: next.id,
+      subjectType: old.subjectType,
+      subjectId: old.subjectId,
+      schemaId: old.schemaId,
+      nextVersion: next.version,
+    },
+  });
+
   return { old, next };
 }
 

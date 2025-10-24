@@ -1,11 +1,12 @@
 // src/pages/products/DPPViewerPage.tsx
 import * as React from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 import { WorkflowOrchestrator } from "@/services/orchestration/WorkflowOrchestrator";
-import type { VerifiablePresentation } from "@/domains/credential/entities";
+import type { VerifiablePresentation, VerifiableCredential } from "@/domains/credential/entities";
+import { verifyVC } from "@/domains/credential/services";
 import type { ComplianceReport } from "@/domains/compliance/services";
 import { useCredentialStore } from "@/stores/credentialStore";
 import { getProductById } from "@/services/api/products";
@@ -16,6 +17,8 @@ import type { AccountOwnerType } from "@/types/credit";
 import { costOf } from "@/services/orchestration/creditsPublish";
 import ProductTopBar from "@/components/products/ProductTopBar";
 
+/* -------------------- Helpers -------------------- */
+
 type Snapshot =
   | { id: string; publishedAt: string; content: VerifiablePresentation }
   | null;
@@ -23,8 +26,6 @@ type Snapshot =
 function isErr<T extends { ok: boolean }>(r: T): r is T & { ok: false; reason?: unknown } {
   return r.ok === false;
 }
-
-/* -------------------- Helpers VP → compliance -------------------- */
 
 type TrustupCompliance = {
   productComplianceStandard?: string;
@@ -44,6 +45,21 @@ function extractCompliance(vp?: VerifiablePresentation | null): TrustupComplianc
     productId: t.productId as string | undefined,
   };
 }
+
+function extractVCs(vp?: VerifiablePresentation | null): VerifiableCredential[] {
+  if (!vp) return [];
+  const vcs = (vp as any)?.verifiableCredential;
+  if (Array.isArray(vcs)) return vcs as VerifiableCredential[];
+  return vcs ? [vcs as VerifiableCredential] : [];
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const enc = new TextEncoder().encode(input);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/* ============================= Component ============================= */
 
 export default function DPPViewerPage() {
   const { id: productId, dppId: routeDppId } = useParams<{ id?: string; dppId?: string }>();
@@ -65,6 +81,12 @@ export default function DPPViewerPage() {
 
   const roleBase = currentUser?.role === "company" ? "/company" : "/creator";
   const basePath = `${roleBase}/products`;
+
+  const [attachedOrgVCIds, setAttachedOrgVCIds] = React.useState<string[]>([]);
+  const [hashPreview, setHashPreview] = React.useState<string | null>(null);
+  const [hashSnapshot, setHashSnapshot] = React.useState<string | null>(null);
+
+  const [vcProofMap, setVcProofMap] = React.useState<Record<number, "valid" | "invalid" | "unknown">>({});
 
   const loadAll = React.useCallback(async () => {
     if (routeDppId) {
@@ -89,7 +111,9 @@ export default function DPPViewerPage() {
     setErr(null);
     try {
       load?.();
-      getProductById(productId);
+      const p = getProductById(productId) as any;
+      const ids = Array.isArray(p?.attachedOrgVCIds) ? (p.attachedOrgVCIds as string[]) : [];
+      setAttachedOrgVCIds(ids);
 
       const orgVC = org || {};
       const prodVC = (prod && prod[productId]) || {};
@@ -137,6 +161,56 @@ export default function DPPViewerPage() {
       alive = false;
     };
   }, [currentUser?.did, currentUser?.companyDid, currentUser?.role]);
+
+  /* Hash VP (preview o snapshot) */
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const vp = vpPreview ? JSON.stringify(vpPreview) : null;
+      const snap = snapshot ? JSON.stringify(snapshot.content) : null;
+      if (vp) {
+        const h = await sha256Hex(vp);
+        if (alive) setHashPreview(h);
+      } else setHashPreview(null);
+      if (snap) {
+        const h2 = await sha256Hex(snap);
+        if (alive) setHashSnapshot(h2);
+      } else setHashSnapshot(null);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [vpPreview, snapshot]);
+
+  /* Verifica proof per VC incluse */
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const vcs = extractVCs(snapshot ? snapshot.content : vpPreview);
+      if (!vcs.length) {
+        if (alive) setVcProofMap({});
+        return;
+      }
+      const results = await Promise.all(
+        vcs.map(async (vc, i) => {
+          try {
+            const r = await verifyVC(vc);
+            return [i, r.valid ? "valid" : "invalid"] as const;
+          } catch {
+            return [i, "unknown"] as const;
+          }
+        })
+      );
+      if (alive) {
+        const map: Record<number, "valid" | "invalid" | "unknown"> = {};
+        results.forEach(([i, s]) => (map[i] = s));
+        setVcProofMap(map);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [vpPreview, snapshot]);
 
   async function onReprepare() {
     await loadAll();
@@ -223,6 +297,49 @@ export default function DPPViewerPage() {
     );
   }
 
+  function renderIncludedVCs(vp: VerifiablePresentation | null) {
+    const vcs = extractVCs(vp);
+    if (!vcs.length) return (
+      <div className="text-sm text-muted-foreground">Nessuna VC inclusa nella VP.</div>
+    );
+    return (
+      <div className="space-y-2">
+        <div className="text-sm font-medium">VC incluse nella VP</div>
+        <ul className="space-y-1">
+          {vcs.map((vc, i) => {
+            const anyVc = vc as any;
+            const label =
+              anyVc.id ||
+              anyVc.schemaId ||
+              anyVc.standardId ||
+              (Array.isArray(anyVc.type) ? anyVc.type.join(",") : "VC");
+            const proofState = vcProofMap[i] ?? "unknown";
+            return (
+              <li key={i} className="text-xs rounded border p-2 bg-muted/30">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono break-all">{String(label)}</span>
+                  <span className="ml-auto">
+                    Proof: {proofState === "valid" ? "✅" : proofState === "invalid" ? "❌" : "?"}
+                  </span>
+                </div>
+                {(anyVc.schemaId || anyVc.standardId) && (
+                  <div className="text-[11px] text-muted-foreground">
+                    {anyVc.schemaId ? `schemaId: ${anyVc.schemaId}` : null}
+                    {anyVc.schemaId && anyVc.standardId ? " · " : null}
+                    {anyVc.standardId ? `standardId: ${anyVc.standardId}` : null}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    );
+  }
+
+  const productCredentialsHref = productId ? `${roleBase}/products/${productId}/credentials` : basePath;
+  const orgCredentialsHref = `/company/credentials`;
+
   return (
     <div className="space-y-4">
       {productId && <ProductTopBar roleBase={roleBase} productId={productId} />}
@@ -244,6 +361,29 @@ export default function DPPViewerPage() {
         </Button>
       </div>
 
+      {/* Info collegamenti e stato filtro VC organizzative */}
+      {productId && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Collegamenti e gestione credenziali</CardTitle>
+            <CardDescription className="text-xs">
+              VC organizzative collegate: <span className="font-mono">{attachedOrgVCIds.length}</span>{" "}
+              {attachedOrgVCIds.length === 0 ? "(fallback: tutte le VC organizzative valide)" : ""}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex gap-2 flex-wrap">
+            <Button asChild size="sm" variant="outline">
+              <Link to={productCredentialsHref}>Apri gestione credenziali prodotto</Link>
+            </Button>
+            {roleBase === "/company" && (
+              <Button asChild size="sm" variant="outline">
+                <Link to={orgCredentialsHref}>Apri credenziali organizzative</Link>
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">DPP Viewer → VP & Compliance</CardTitle>
@@ -262,8 +402,12 @@ export default function DPPViewerPage() {
                 <div>
                   <b>Published:</b> {new Date(snapshot.publishedAt).toLocaleString()}
                 </div>
+                <div>
+                  <b>Hash VP:</b> <span className="font-mono">{hashSnapshot ?? "…"}</span>
+                </div>
               </div>
               {renderComplianceBlock(snapshot.content)}
+              {renderIncludedVCs(snapshot.content)}
               <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
 {JSON.stringify(snapshot.content, null, 2)}
               </pre>
@@ -276,9 +420,11 @@ export default function DPPViewerPage() {
               {vpPreview && (
                 <>
                   <div className="text-sm">
-                    <b>VP pronta</b> — credenziali incluse: <span className="font-mono">{includedCount}</span>
+                    <b>VP pronta</b> — credenziali incluse: <span className="font-mono">{includedCount}</span>{" "}
+                    · Hash VP: <span className="font-mono">{hashPreview ?? "…"}</span>
                   </div>
                   {renderComplianceBlock(vpPreview)}
+                  {renderIncludedVCs(vpPreview)}
                   <pre className="text-xs p-3 rounded border overflow-auto bg-muted/30">
 {JSON.stringify(vpPreview, null, 2)}
                   </pre>

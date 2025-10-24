@@ -20,6 +20,9 @@ import type { VC, VCStatus } from "@/types/vc";
 import { getProductById } from "@/services/api/products";
 import { getCompanyAttrs, type ComplianceDef } from "@/services/api/companyAttributes";
 
+/* ---- Eventi ---- */
+import { createEvent } from "@/services/api/events";
+
 /* ============================== Tipi ============================== */
 
 export type OrgVCMap = Partial<Record<StandardId, VerifiableCredential<any>>>;
@@ -86,7 +89,7 @@ function fallbackReport(orgNum: number, prodNum: number, pid: string): Complianc
   return { ok: missing.length === 0, missing: missing as unknown as MissingItem[] } as ComplianceReport;
 }
 
-/** solo VC organizzative collegate al prodotto */
+/** VC organizzative collegate al prodotto, con fallback a "tutte" se nessun collegamento */
 async function collectFromNewApi(productId: string) {
   const p: any = getProductById(productId);
   const allowed = new Set<string>(Array.isArray(p?.attachedOrgVCIds) ? p.attachedOrgVCIds : []);
@@ -94,8 +97,8 @@ async function collectFromNewApi(productId: string) {
     listVCs({ subjectType: "organization", status: "valid" as VCStatus }),
     listVCs({ subjectType: "product", subjectId: productId, status: "valid" as VCStatus }),
   ]);
-  const org = orgAll.filter((vc: any) => allowed.has(vc.id));
-  return { org, prod };
+  const org = allowed.size ? orgAll.filter((vc: any) => allowed.has(vc.id)) : orgAll;
+  return { org, prod, allowedCount: allowed.size };
 }
 
 /* -------- Compliance prodotto: defs aziendali + valori prodotto -------- */
@@ -149,6 +152,19 @@ function attachProductComplianceToVP(vp: VerifiablePresentation, productId: stri
   return withMeta as VerifiablePresentation;
 }
 
+/* ---- Emitter eventi con campi obbligatori sempre valorizzati ---- */
+function emitProductEvent(productId: string, data: any) {
+  const p: any = getProductById(productId);
+  if (!p) return;
+  createEvent({
+    type: "product.updated",
+    productId: p.id,
+    companyDid: p.companyDid,
+    actorDid: p.createdByDid,
+    data,
+  });
+}
+
 /* ============================ Orchestratore ============================ */
 
 export const WorkflowOrchestrator = {
@@ -177,6 +193,8 @@ export const WorkflowOrchestrator = {
       let vp = composeVP(creds);
       if (pid) vp = attachProductComplianceToVP(vp, pid);
 
+      if (pid) emitProductEvent(pid, { action: "vp.composed", included: creds.length });
+
       return { ok: true, vp, included: creds.length, report };
     }
 
@@ -186,7 +204,7 @@ export const WorkflowOrchestrator = {
       return { ok: false, report, message: "productId non rilevato dall'URL" };
     }
 
-    const { org, prod } = await collectFromNewApi(pid2);
+    const { org, prod, allowedCount } = await collectFromNewApi(pid2);
     let report = fallbackReport(org.length, prod.length, pid2);
 
     {
@@ -199,6 +217,14 @@ export const WorkflowOrchestrator = {
     let vp = composeVP(adapted);
     vp = attachProductComplianceToVP(vp, pid2);
 
+    emitProductEvent(pid2, {
+      action: "vp.composed",
+      included: adapted.length,
+      org: org.length,
+      prod: prod.length,
+      filterAttached: allowedCount > 0,
+    });
+
     if (!report.ok) return { ok: false, report, message: "Compliance incompleta nelle VC o negli attributi prodotto" };
     return { ok: true, vp, included: adapted.length, report };
   },
@@ -208,6 +234,14 @@ export const WorkflowOrchestrator = {
     const ok = (await verifyVP(signed)).valid;
     if (!ok) return { ok: false, message: "Impossibile verificare la VP firmata" };
     const { id } = SnapshotStorage.save(signed);
+
+    const included = Array.isArray((signed as any)?.verifiableCredential)
+      ? (signed as any).verifiableCredential.length
+      : undefined;
+    const pid = (signed as any)?.trustup?.productId ?? productIdFromLocation() ?? undefined;
+
+    if (pid) emitProductEvent(pid, { action: "vp.published", snapshotId: id, included });
+
     return { ok: true, snapshotId: id, vp: signed };
   },
 
@@ -217,7 +251,7 @@ export const WorkflowOrchestrator = {
   },
 
   async generateAndPublishVP(productId: string): Promise<PublishResult> {
-    const { org, prod } = await collectFromNewApi(productId);
+    const { org, prod, allowedCount } = await collectFromNewApi(productId);
     let report = fallbackReport(org.length, prod.length, productId);
 
     {
@@ -230,6 +264,15 @@ export const WorkflowOrchestrator = {
     const adapted: VerifiableCredential[] = [...org, ...prod].map(adaptVC);
     let vp = composeVP(adapted);
     vp = attachProductComplianceToVP(vp, productId);
+
+    emitProductEvent(productId, {
+      action: "vp.composed",
+      included: adapted.length,
+      org: org.length,
+      prod: prod.length,
+      filterAttached: allowedCount > 0,
+    });
+
     return await this.publishVP(vp);
   },
 

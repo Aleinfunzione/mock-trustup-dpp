@@ -16,6 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { getActor } from "@/services/api/identity";
 import BOMEditor from "@/components/products/BOMEditor";
 import ProductAttributesForm from "@/components/products/ProductAttributesForm";
+import SchemaAttributesForm from "@/components/products/SchemaAttributesForm";
 
 import {
   createProduct,
@@ -57,7 +58,7 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
     if (!t.find((x) => x.id === typeId)) {
       setTypeId(t[0]?.id ?? "generic");
     }
-    // non resetto gli attributi qui: ProductAttributesForm gestisce la coerenza rispetto a typeId
+    // non resetto gli attributi qui: i form gestiscono la coerenza rispetto a typeId
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId]);
 
@@ -112,8 +113,7 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
       <CardHeader>
         <CardTitle>Nuovo prodotto</CardTitle>
         <CardDescription>
-          Crea un prodotto con attributi guidati (JSON generato automaticamente) e distinta base (BOM).
-          La validazione AJV avviene lato servizio mock.
+          Crea un prodotto con attributi guidati e distinta base (BOM). La validazione AJV avviene lato servizio mock.
         </CardDescription>
       </CardHeader>
 
@@ -203,12 +203,21 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
               </div>
             </div>
 
-            {/* Attributi guidati + JSON avanzato */}
-            <ProductAttributesForm
-              typeId={typeId}
-              value={attributes}
-              onChange={setAttributes}
-            />
+            {/* Attributi guidati: usa SchemaAttributesForm se disponibile, altrimenti fallback */}
+            {selectedType?.schema ? (
+              <SchemaAttributesForm
+                schema={selectedType.schema}
+                value={attributes}
+                onChange={setAttributes}
+                disabled={saving}
+              />
+            ) : (
+              <ProductAttributesForm
+                typeId={typeId}
+                value={attributes}
+                onChange={setAttributes}
+              />
+            )}
 
             {/* BOM */}
             <BOMEditor value={bom} onChange={setBom} />
