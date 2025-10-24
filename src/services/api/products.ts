@@ -1,10 +1,10 @@
-// /src/services/api/products.ts
+// src/services/api/products.ts
 // Mock-only su localStorage: prodotti, tipi prodotto e gestione "pillole" attributi
 // per il flusso Catalogo → Form dinamico → Aggregazione { gs1, iso, euDpp }.
 //
 // NOTE:
 // - Compatibile col codice esistente (tipi importati).
-// - Estende Product localmente: attributesPills[] e dppDraft.
+// - Estende internamente Product come ProductExt: attributesPills[] e dppDraft.
 // - La validazione AJV del TIPO usa "attributes" (object); le pillole generano dppDraft.
 
 import { STORAGE_KEYS, PRODUCT_TYPES_BY_CATEGORY } from "@/utils/constants";
@@ -50,7 +50,6 @@ export type ProductExt = Product & {
   dppDraft?: any;
   /**
    * Attributi di compliance assegnati al prodotto (derivano da CompanyAttributes.compliance).
-   * Se il tipo Product di progetto include già `complianceAttrs`, questo campo è ridondante ma compatibile.
    */
   complianceAttrs?: Record<string, ComplianceValue>;
 };
@@ -138,7 +137,7 @@ export function validateBOM(root: BomNode[]): { ok: boolean; error?: string } {
 
     const hasRef = !!(node as any).componentRef;
     const hasName = !!(node as any).placeholderName;
-    if (hasRef && hasName) return false; // alternativi, non entrambi
+    if (hasRef && hasName) return false; // alternativi
 
     const children = (node.children ?? []) as BomNode[];
     if (stack.includes(node.id)) return false; // ciclo
@@ -174,10 +173,7 @@ function sanitizeComplianceAttrs(
   const out: Record<string, ComplianceValue> = {};
   if (!input || typeof input !== "object") return out;
   for (const [k, v] of Object.entries(input)) {
-    if (v === "") {
-      // Evita NaN o stringhe vuote: tratta come undefined → campo assente
-      continue;
-    }
+    if (v === "") continue;
     out[k] = v as ComplianceValue;
   }
   return out;
@@ -221,7 +217,6 @@ export function deleteProduct(id: ProductId): void {
   const existing = map[id];
   if (!existing) return;
 
-  // Evento prima di rimuovere
   createEvent({
     type: "product.updated",
     productId: existing.id,
@@ -237,7 +232,6 @@ export function deleteProduct(id: ProductId): void {
 export function updateProduct(
   id: ProductId,
   patch: Partial<Omit<Product, "id" | "companyDid" | "createdByDid" | "createdAt">> & {
-    /** Consente patch diretta anche se il tipo Product non la include ancora esplicitamente */
     complianceAttrs?: Record<string, ComplianceValue>;
   }
 ): Product {
@@ -248,7 +242,6 @@ export function updateProduct(
   const next: ProductExt = {
     ...existing,
     ...patch,
-    // se la patch include complianceAttrs, sanitizza
     complianceAttrs:
       patch.complianceAttrs !== undefined
         ? sanitizeComplianceAttrs(patch.complianceAttrs)
@@ -256,7 +249,7 @@ export function updateProduct(
     updatedAt: nowISO(),
   };
 
-  // validazioni (solo su "attributes" oggetto e BOM)
+  // validazioni (attributes + BOM)
   const types = getProductTypesMap();
   const type = types[next.typeId];
   const v1 = validateProductAgainstType(next, type);
@@ -347,6 +340,8 @@ export function createProduct(input: CreateProductInput): Product {
     dppDraft: { gs1: {}, iso: {}, euDpp: {} },
     // Compliance inizialmente vuota
     complianceAttrs: {},
+    // VC organizzative collegate
+    attachedOrgVCIds: [],
     createdAt: nowISO(),
     updatedAt: nowISO(),
     isPublished: false,
@@ -360,14 +355,13 @@ export function createProduct(input: CreateProductInput): Product {
   const v2 = validateBOM(product.bom ?? []);
   if (!v2.ok) throw new Error(v2.error);
 
-  // Sync draft (per completezza, anche se non ci sono pillole)
+  // Sync draft (anche se non ci sono pillole)
   syncDppDraft(product);
 
   const map = getProductsMap();
   map[id] = product;
   saveProductsMap(map);
 
-  // Evento di creazione
   createEvent({
     type: "product.created",
     productId: product.id,
@@ -392,11 +386,9 @@ export function listProductTypes(categoryId?: string): ProductType[] {
   if (!categoryId) return all;
 
   const allowedIds = new Set<string>(PRODUCT_TYPES_BY_CATEGORY[categoryId] ?? []);
-  // Se non c'è mappatura o è vuota, non filtrare
   if (allowedIds.size === 0) return all;
 
   const filtered = all.filter((t) => allowedIds.has(t.id));
-  // Se nessuno dei typeId mappati esiste nello storage, fallback a tutti
   return filtered.length > 0 ? filtered : all;
 }
 
@@ -409,7 +401,6 @@ export function upsertProductType(pt: ProductType): ProductType {
 
 /* ---------------- Pillole attributi (Catalogo) ---------------- */
 
-// addPill
 export function addPill(productId: string, pill: PillInstance) {
   const map = getProductsMap();
   const p = map[productId] as ProductExt | undefined;
@@ -428,7 +419,6 @@ export function addPill(productId: string, pill: PillInstance) {
   });
 }
 
-// updatePill
 export function updatePill(productId: string, pillId: string, data: any) {
   const map = getProductsMap();
   const p = map[productId] as ProductExt | undefined;
@@ -448,7 +438,6 @@ export function updatePill(productId: string, pillId: string, data: any) {
   });
 }
 
-// removePill
 export function removePill(productId: string, pillId: string) {
   const map = getProductsMap();
   const p = map[productId] as ProductExt | undefined;
@@ -472,16 +461,57 @@ export function getAggregatedAttributes(productId: string) {
   return aggregateAttributes((p as ProductExt | null)?.attributesPills || []);
 }
 
+/* ---------------- VC organizzative collegate al prodotto ---------------- */
+
+export function getAttachedOrgVCIds(productId: ProductId): string[] {
+  const p = getProductsMap()[productId] as any;
+  return Array.isArray(p?.attachedOrgVCIds) ? p.attachedOrgVCIds : [];
+}
+
+export function attachOrgVC(productId: ProductId, vcId: string): void {
+  const map = getProductsMap();
+  const p = map[productId] as any;
+  if (!p) throw new Error("Prodotto non trovato");
+  const set = new Set<string>(Array.isArray(p.attachedOrgVCIds) ? p.attachedOrgVCIds : []);
+  set.add(vcId);
+  p.attachedOrgVCIds = Array.from(set);
+  p.updatedAt = nowISO();
+  saveProductsMap(map);
+
+  createEvent({
+    type: "product.updated",
+    productId: p.id,
+    companyDid: p.companyDid,
+    actorDid: p.createdByDid,
+    data: { action: "orgvc.attach", vcId },
+  });
+}
+
+export function detachOrgVC(productId: ProductId, vcId: string): void {
+  const map = getProductsMap();
+  const p = map[productId] as any;
+  if (!p) return;
+  const list = Array.isArray(p.attachedOrgVCIds) ? p.attachedOrgVCIds : [];
+  p.attachedOrgVCIds = list.filter((id: string) => id !== vcId);
+  p.updatedAt = nowISO();
+  saveProductsMap(map);
+
+  createEvent({
+    type: "product.updated",
+    productId: p.id,
+    companyDid: p.companyDid,
+    actorDid: p.createdByDid,
+    data: { action: "orgvc.detach", vcId },
+  });
+}
+
 /* ---------------- Publish DPP (MOCK) ---------------- */
-// NB: la pubblicazione mock NON firma i link esterni; la proof resterà stabile
-// se in futuro aggiungi/rimuovi metadati esterni (VC Org/Eventi).
 
 export async function publishDPP(productId: ProductId): Promise<Product> {
   const map = getProductsMap();
   const prod = map[productId] as ProductExt | undefined;
   if (!prod) throw new Error("Prodotto inesistente");
 
-  // Bozza hash semplice del payload "pubblicato".
   const hash = await sha256Hex(JSON.stringify({ id: prod.id, at: Date.now(), dppDraft: prod.dppDraft }));
   (prod as any).isPublished = true;
   (prod as any).dppId = `vc:mock:${hash.slice(0, 24)}`;
@@ -490,7 +520,6 @@ export async function publishDPP(productId: ProductId): Promise<Product> {
   map[productId] = prod;
   saveProductsMap(map);
 
-  // Evento di pubblicazione
   createEvent({
     type: "dpp.published",
     productId: prod.id,

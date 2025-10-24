@@ -50,23 +50,16 @@ export default function ProductForm({ onCreated, onCancel }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Carica i tipi per la categoria selezionata
+  // Carica i tipi per la categoria selezionata e riallinea il typeId se necessario
   useEffect(() => {
     const t = listProductTypes(categoryId);
     setTypes(t);
     if (!t.find((x) => x.id === typeId)) {
       setTypeId(t[0]?.id ?? "generic");
     }
-  }, [categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // All'avvio
-  useEffect(() => {
-    const t = listProductTypes(categoryId);
-    setTypes(t);
-    if (!t.find((x) => x.id === typeId)) {
-      setTypeId(t[0]?.id ?? "generic");
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // non resetto gli attributi qui: ProductAttributesForm gestisce la coerenza rispetto a typeId
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryId]);
 
   const selectedType = useMemo(
     () => types.find((t) => t.id === typeId),

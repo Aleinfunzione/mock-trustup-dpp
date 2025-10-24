@@ -1,4 +1,3 @@
-// src/components/layout/Sidebar.tsx
 import * as React from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -91,7 +90,7 @@ export default function Sidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
-              {/* Prodotti: solo funzioni globali */}
+              {/* Prodotti */}
               <Collapsible defaultOpen={starts(productsBase)} className="group/collapsible">
                 <SidebarMenuItem>
                   <CollapsibleTrigger asChild>
@@ -130,11 +129,12 @@ export default function Sidebar() {
                 </SidebarMenuItem>
               </Collapsible>
 
-              {/* Organizzazione solo company */}
+              {/* Organizzazione (Company) */}
               {role === "company" && (
                 <Collapsible
                   defaultOpen={
-                    starts(`${base}/attributes`) || starts(`${base}/compliance`) || starts(`${base}/credentials`)
+                    starts(`${base}/attributes`) || starts(`${base}/compliance`) ||
+                    starts(`${base}/credentials`) || starts(`${base}/team`)
                   }
                   className="group/collapsible"
                 >
@@ -142,7 +142,8 @@ export default function Sidebar() {
                     <CollapsibleTrigger asChild>
                       <SidebarMenuButton
                         isActive={
-                          starts(`${base}/attributes`) || starts(`${base}/compliance`) || starts(`${base}/credentials`)
+                          starts(`${base}/attributes`) || starts(`${base}/compliance`) ||
+                          starts(`${base}/credentials`) || starts(`${base}/team`)
                         }
                       >
                         <span>Organizzazione</span>
@@ -164,6 +165,11 @@ export default function Sidebar() {
                         <SidebarMenuSubItem>
                           <SidebarMenuSubButton asChild isActive={starts(`${base}/credentials`)}>
                             <NavLink to={`${base}/credentials`}><span>Credenziali org</span></NavLink>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                        <SidebarMenuSubItem>
+                          <SidebarMenuSubButton asChild isActive={starts(`${base}/team`)}>
+                            <NavLink to={`${base}/team`}><span>Team</span></NavLink>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                       </SidebarMenuSub>

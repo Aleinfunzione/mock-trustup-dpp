@@ -10,8 +10,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { useProducts } from "@/hooks/useProducts";
 // opzionale: tenta API diretta se esiste
 import * as ProductsApi from "@/services/api/products";
+import { listProductTypes } from "@/services/api/products";
 // isole azienda
 import { getCompanyAttrs, type Island } from "@/services/api/companyAttributes";
+import type { ProductType } from "@/types/productType";
 
 export default function ProductCreatePage() {
   const { currentUser } = useAuth();
@@ -19,17 +21,30 @@ export default function ProductCreatePage() {
   const role = currentUser?.role === "company" ? "company" : "creator";
   const base = `/${role}/products`;
   const companyDid = (currentUser as any)?.companyDid;
+  const createdByDid = (currentUser as any)?.did;
 
   const { create: hookCreate } = (useProducts?.() as any) ?? {};
 
   const [name, setName] = React.useState("");
   const [typeId, setTypeId] = React.useState("generic");
+  const [types, setTypes] = React.useState<ProductType[]>([]);
   const [sku, setSku] = React.useState("");
   const [islandId, setIslandId] = React.useState("");
   const [islands, setIslands] = React.useState<Island[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
 
+  // carica tipi prodotto
+  React.useEffect(() => {
+    const all = listProductTypes();
+    setTypes(all);
+    if (!all.find((t) => t.id === typeId)) {
+      setTypeId(all[0]?.id ?? "generic");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // carica isole azienda
   React.useEffect(() => {
     if (!companyDid) return;
     const attrs = getCompanyAttrs(companyDid);
@@ -66,16 +81,26 @@ export default function ProductCreatePage() {
       setErr("Nome obbligatorio");
       return;
     }
+    if (!companyDid || !createdByDid) {
+      setErr("Account non valido per creare prodotti");
+      return;
+    }
     setSaving(true);
     setErr(null);
     try {
+      // payload compatibile sia con hook legacy sia con services
       const payload = {
         name: name.trim(),
-        type: typeId || "generic",
         sku: sku || undefined,
-        islandId: islandId || undefined,
+        typeId: typeId || "generic",
+        type: typeId || "generic",            // compat legacy
         companyDid,
-        ownerDid: (currentUser as any)?.did,
+        createdByDid,
+        ownerDid: createdByDid,               // compat legacy
+        attributes: {},                       // quick-create
+        bom: [],                              // quick-create
+        // islandId è opzionale e al momento non fa parte del modello Product
+        islandId: islandId || undefined,
       };
       const newId = await doCreate(payload);
       nav(`${base}/${encodeURIComponent(newId)}`, { replace: true });
@@ -109,22 +134,37 @@ export default function ProductCreatePage() {
           <form onSubmit={onSubmit} className="grid gap-4 max-w-xl">
             <div className="grid gap-2">
               <Label htmlFor="name">Nome</Label>
-              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
+              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required disabled={saving} />
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="type">Tipo</Label>
-              <Input id="type" value={typeId} onChange={(e) => setTypeId(e.target.value)} placeholder="generic" />
+              <Label>Tipo</Label>
+              <Select value={typeId} onValueChange={setTypeId} disabled={saving || types.length === 0}>
+                <SelectTrigger aria-label="Seleziona tipo">
+                  <SelectValue placeholder="Seleziona un tipo" />
+                </SelectTrigger>
+                <SelectContent>
+                  {types.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">Nessun tipo disponibile</div>
+                  ) : (
+                    types.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name} ({t.id})
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="grid gap-2">
               <Label htmlFor="sku">SKU (opzionale)</Label>
-              <Input id="sku" value={sku} onChange={(e) => setSku(e.target.value)} />
+              <Input id="sku" value={sku} onChange={(e) => setSku(e.target.value)} disabled={saving} />
             </div>
 
             <div className="grid gap-2">
               <Label>Isola (opzionale)</Label>
-              <Select value={islandId} onValueChange={(v) => setIslandId(v)}>
+              <Select value={islandId} onValueChange={(v) => setIslandId(v)} disabled={saving}>
                 <SelectTrigger><SelectValue placeholder="Nessuna" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="">Nessuna</SelectItem>
@@ -136,7 +176,9 @@ export default function ProductCreatePage() {
             </div>
 
             <div className="flex gap-2 pt-2">
-              <Button type="submit" disabled={saving}>Crea prodotto</Button>
+              <Button type="submit" disabled={saving || !companyDid || !createdByDid || !name.trim()}>
+                {saving ? "Creo…" : "Crea prodotto"}
+              </Button>
               <Button type="button" variant="outline" asChild>
                 <Link to={base}>Indietro</Link>
               </Button>

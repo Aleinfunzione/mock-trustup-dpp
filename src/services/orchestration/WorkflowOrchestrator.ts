@@ -86,11 +86,15 @@ function fallbackReport(orgNum: number, prodNum: number, pid: string): Complianc
   return { ok: missing.length === 0, missing: missing as unknown as MissingItem[] } as ComplianceReport;
 }
 
+/** solo VC organizzative collegate al prodotto */
 async function collectFromNewApi(productId: string) {
-  const [org, prod] = await Promise.all([
+  const p: any = getProductById(productId);
+  const allowed = new Set<string>(Array.isArray(p?.attachedOrgVCIds) ? p.attachedOrgVCIds : []);
+  const [orgAll, prod] = await Promise.all([
     listVCs({ subjectType: "organization", status: "valid" as VCStatus }),
     listVCs({ subjectType: "product", subjectId: productId, status: "valid" as VCStatus }),
   ]);
+  const org = orgAll.filter((vc: any) => allowed.has(vc.id));
   return { org, prod };
 }
 
@@ -153,36 +157,29 @@ export const WorkflowOrchestrator = {
     prodVC: ProdVCMap,
     opts?: ComplianceOptions
   ): Promise<PrepareVPResult> {
-    // Proviamo a dedurre productId dall'URL per la compliance prodotto
     const pid = productIdFromLocation();
 
     if (hasDomainVC(orgVC, prodVC)) {
-      // 1) Valutazione compliance su VC (organizzazione+prodotto)
       let report = await evaluateCompliance(orgVC, prodVC, opts);
 
-      // 2) Validazione attributi di compliance prodotto rispetto ai defs aziendali
       if (pid) {
         const { attrs, defs } = readProductCompliance(pid);
         const miss = missingRequired(defs, attrs);
         report = mergeComplianceMissing(report, miss);
       }
 
-      // 3) Se incompleto → stop
       if (!report.ok) return { ok: false, report, message: "Compliance incompleta: mancano credenziali o campi richiesti" };
 
-      // 4) Verifica proof VC
       const creds = collectCreds(orgVC, prodVC);
       const allVcValid = await verifyAllVC(creds);
       if (!allVcValid) return { ok: false, report, message: "Alcune VC non superano la verifica proof" };
 
-      // 5) Compose VP e includi attributi di compliance prodotto nel payload VP
       let vp = composeVP(creds);
       if (pid) vp = attachProductComplianceToVP(vp, pid);
 
       return { ok: true, vp, included: creds.length, report };
     }
 
-    // Fallback: raccolta da nuovo storage
     const pid2 = pid;
     if (!pid2) {
       const report = fallbackReport(0, 0, "unknown");
@@ -192,7 +189,6 @@ export const WorkflowOrchestrator = {
     const { org, prod } = await collectFromNewApi(pid2);
     let report = fallbackReport(org.length, prod.length, pid2);
 
-    // Aggiungi controllo compliance prodotto (defs aziendali)
     {
       const { attrs, defs } = readProductCompliance(pid2);
       const miss = missingRequired(defs, attrs);
@@ -224,7 +220,6 @@ export const WorkflowOrchestrator = {
     const { org, prod } = await collectFromNewApi(productId);
     let report = fallbackReport(org.length, prod.length, productId);
 
-    // Controllo compliance prodotto
     {
       const { attrs, defs } = readProductCompliance(productId);
       const miss = missingRequired(defs, attrs);

@@ -1,4 +1,3 @@
-// src/routes/AppRouter.tsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ROUTES } from "@/utils/constants";
 
@@ -20,8 +19,9 @@ import CompanyCompliancePage from "@/pages/company/CompanyCompliancePage";
 import OrganizationCredentialPage from "@/pages/company/OrganizationCredentialPage";
 import CompanyCreditsPage from "@/pages/company/CompanyCreditsPage";
 import CompanyOrganizationPage from "@/pages/company/CompanyOrganizationPage";
+import CompanyTeamPage from "@/pages/company/CompanyTeamPage"; // ⬅️ NEW
 import CreditsHistoryPage from "@/pages/company/CreditsHistoryPage";
-import CreateProductPanel from "@/pages/company/CreateProductPanel"; // ⬅️ NEW
+import CreateProductPanel from "@/pages/company/CreateProductPanel";
 
 // Admin
 import AdminCreditsPage from "@/pages/admin/AdminCreditsPage";
@@ -139,7 +139,14 @@ export default function AppRouter() {
               </RequireRole>
             }
           />
-          <Route path="/company/team" element={<Navigate to="/company/org?tab=team" replace />} />
+          <Route
+            path="/company/team"
+            element={
+              <RequireRole role="company">
+                <CompanyTeamPage /> {/* ⬅️ dedicated Team page */}
+              </RequireRole>
+            }
+          />
           <Route path="/company/islands" element={<Navigate to="/company/org?tab=islands" replace />} />
           <Route
             path="/company/credentials"
@@ -179,7 +186,7 @@ export default function AppRouter() {
             path="/company/products/new"
             element={
               <RequireRole role="company">
-                <CreateProductPanel /> {/* ⬅️ usa il pannello Azienda */}
+                <CreateProductPanel />
               </RequireRole>
             }
           />

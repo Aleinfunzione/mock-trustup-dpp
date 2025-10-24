@@ -14,6 +14,7 @@ import type {
   CreateProductVCInput,
 } from "@/types/vc";
 import { computeVCHash } from "@/services/crypto/vcIntegrity";
+import { getCompanyAttrs } from "@/services/api/companyAttributes";
 
 /* -------------------- storage helpers (no safeGet/safeSet) -------------------- */
 function lsGet<T = any>(key: string): T | null {
@@ -131,7 +132,7 @@ async function signAndFinalize(partial: any): Promise<VC> {
   return { ...partial, proof: { type: "MockJWS", jws } } as VC;
 }
 
-/* -------------------- API -------------------- */
+/* -------------------- API core -------------------- */
 export async function createOrganizationVC(input: CreateOrganizationVCInput): Promise<VC> {
   await validateAgainstSchema(input.data, input.schemaId);
   const base = {
@@ -280,4 +281,36 @@ export async function verifyIntegrity(idOrVC: string | VC): Promise<IntegrityRes
   const expected = await computeVCHash(vc);
   const actual = vc.proof?.jws ?? "";
   return { valid: expected === actual, expectedHash: expected, actualHash: actual };
+}
+
+/* -------------------- VC organizzative per collegamento ai prodotti -------------------- */
+export type OrgVC = {
+  id: string;
+  title: string;
+  standardId?: string;
+  validFrom?: string;
+  validUntil?: string;
+};
+
+/**
+ * Estrae VC organizzative dall’anagrafica aziendale.
+ * Sorgenti accettate:
+ *  - orgVCs: [{ id, title, standardId, validFrom, validUntil }]
+ *  - certifications: fallback compatibile con { id|vcId|identifier, name|title|standard, notBefore/validFrom, notAfter/validUntil }
+ */
+export function listOrganizationVC(companyDid: string): OrgVC[] {
+  const attrs: any = getCompanyAttrs(companyDid) || {};
+  const direct: any[] = Array.isArray(attrs.orgVCs) ? attrs.orgVCs : [];
+  const fallback: any[] = Array.isArray(attrs.certifications) ? attrs.certifications : [];
+  const rows = (direct.length ? direct : fallback).filter(Boolean);
+
+  return rows
+    .map((r) => ({
+      id: String(r.id ?? r.vcId ?? r.identifier ?? ""),
+      title: String(r.title ?? r.name ?? r.standard ?? r.id ?? "VC"),
+      standardId: r.standardId ?? r.standard ?? undefined,
+      validFrom: r.validFrom ?? r.notBefore ?? undefined,
+      validUntil: r.validUntil ?? r.notAfter ?? undefined,
+    }))
+    .filter((x) => x.id);
 }

@@ -1,3 +1,4 @@
+// src/types/product.ts
 export type ProductId = string;
 
 /** Valore ammesso per gli attributi di compliance */
@@ -5,17 +6,14 @@ export type ComplianceValue = string | number | boolean | null | undefined;
 
 /** Nodo BOM (mock) */
 export interface BomNode {
-  /** id univoco del nodo (uuid o random) */
   id: string;
-  /** riferimento a un prodotto esistente (alternativa a placeholderName) */
   componentRef?: ProductId;
-  /** nome libero se il componente non è ancora registrato */
   placeholderName?: string;
-  /** quantità relativa nel BOM */
   quantity?: number;
-  /** sotto-componenti */
   children?: BomNode[];
 }
+
+import type { PillInstance } from "@/config/attributeCatalog";
 
 export interface Product {
   id: ProductId;
@@ -27,8 +25,17 @@ export interface Product {
 
   /** riferimento al Product Type (schema JSON completo validato con AJV) */
   typeId: string;
+
   /** attributi validati tramite JSON Schema (AJV) */
   attributes: Record<string, any>;
+
+  /** opzionali per flusso “attributi di settore” */
+  schemaId?: string;
+  pills?: PillInstance[];
+  guidedAttributes?: Record<string, any>;
+
+  /** VC organizzative collegate al prodotto */
+  attachedOrgVCIds?: string[];
 
   /** attributi di compliance assegnati da CompanyAttributes.compliance */
   complianceAttrs?: Record<string, ComplianceValue>;

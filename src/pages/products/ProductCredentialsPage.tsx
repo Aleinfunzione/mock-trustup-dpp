@@ -15,11 +15,12 @@ import { useAuthStore } from "@/stores/authStore";
 import { getProductById } from "@/services/api/products";
 import { canAfford, consume, costOf } from "@/services/orchestration/creditsPublish";
 import { notifyError, notifySuccess } from "@/stores/uiStore";
+import ProductTopBar from "@/components/products/ProductTopBar";
+import ProductCertificationsPanel from "@/components/products/ProductCertificationsPanel";
 
 import Form from "@rjsf/core";
 import type { IChangeEvent } from "@rjsf/core";
 import validatorAjv8 from "@rjsf/validator-ajv8";
-import ProductTopBar from "@/components/products/ProductTopBar";
 
 type Schema = Record<string, any>;
 type ProductStandard = Extract<StandardId, "GS1" | "EU_DPP_TEXTILE" | "EU_DPP_ELECTRONICS">;
@@ -37,6 +38,8 @@ export default function ProductCredentialsPage() {
   const { prod, upsertProdVC, load } = useCredentialStore();
 
   const [productName, setProductName] = React.useState<string>("");
+  const [attachedOrgVCIds, setAttachedOrgVCIds] = React.useState<string[]>([]);
+
   const [standard, setStandard] = React.useState<ProductStandard>("GS1");
   const [schema, setSchema] = React.useState<Schema | null>(null);
 
@@ -57,10 +60,13 @@ export default function ProductCredentialsPage() {
   React.useEffect(() => {
     if (!productId) return;
     try {
-      const p = getProductById(productId);
-      setProductName((p as any)?.name || (p as any)?.title || productId);
+      const p = getProductById(productId) as any;
+      setProductName(p?.name || p?.title || productId);
+      const ids = Array.isArray(p?.attachedOrgVCIds) ? (p.attachedOrgVCIds as string[]) : [];
+      setAttachedOrgVCIds(ids);
     } catch {
       setProductName(productId);
+      setAttachedOrgVCIds([]);
     }
   }, [productId]);
 
@@ -164,22 +170,21 @@ export default function ProductCredentialsPage() {
     );
   }
 
-  // link rapidi coerenti con la subnav del dettaglio
   const dppHref = `${roleBase}/products/${productId}/dpp`;
   const bomHref = `${roleBase}/products/${productId}#bom`;
 
   return (
     <div className="space-y-6">
-      {/* Top bar prodotto */}
+      {/* Top bar */}
       <ProductTopBar roleBase={roleBase} productId={productId} />
 
-      {/* Quick links aggiuntivi per coerenza submenu */}
+      {/* Quick links */}
       <div className="flex flex-wrap gap-2">
         <Button asChild size="sm" variant="outline"><Link to={dppHref}>DPP Viewer</Link></Button>
         <Button asChild size="sm" variant="outline"><Link to={bomHref}>BOM</Link></Button>
       </div>
 
-      {/* Breadcrumb + back */}
+      {/* Breadcrumb */}
       <div className="flex items-center justify-between">
         <nav className="text-sm text-muted-foreground">
           <Link to={basePath} className="hover:underline">Prodotti</Link>
@@ -190,6 +195,12 @@ export default function ProductCredentialsPage() {
           <Link to={`${roleBase}/products/${productId}`}>Indietro</Link>
         </Button>
       </div>
+
+      {/* Associazione VC organizzative → prodotto */}
+      <ProductCertificationsPanel
+        productId={productId}
+        onChanged={(ids) => setAttachedOrgVCIds(Array.isArray(ids) ? ids : [])}
+      />
 
       <Card>
         <CardHeader>
